@@ -4,6 +4,7 @@ import '../models/app_summary.dart';
 import '../models/team.dart';
 import '../services/asc_api_client.dart';
 import '../services/team_repository.dart';
+import 'app_detail_screen.dart';
 
 class AppsScreen extends StatefulWidget {
   const AppsScreen({
@@ -74,10 +75,18 @@ class _AppsScreenState extends State<AppsScreen> {
                   '${app.bundleId}\nSKU: ${app.sku} · ${app.primaryLocale}',
                 ),
                 isThreeLine: true,
-                trailing: Text(
-                  app.id,
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => AppDetailScreen(
+                        team: widget.team,
+                        app: app,
+                        repository: widget.repository,
+                      ),
+                    ),
+                  );
+                },
               );
             },
           );

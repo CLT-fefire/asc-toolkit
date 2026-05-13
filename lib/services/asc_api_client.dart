@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 
+import '../models/app_store_version.dart';
+import '../models/app_store_version_localization.dart';
 import '../models/app_summary.dart';
 import '../models/team.dart';
 import 'jwt_signer.dart';
@@ -38,7 +40,7 @@ class AscApiClient {
   final JwtSigner _signer;
   final Dio _dio;
 
-  Future<List<AppSummary>> fetchApps(Team team) async {
+  Future<Map<String, String>> _authHeader(Team team) async {
     final p8 = await repository.readP8(team.id);
     if (p8 == null || p8.isEmpty) {
       throw AscApiException('.p8 키가 저장되어 있지 않습니다');
@@ -48,6 +50,11 @@ class AscApiClient {
       keyId: team.keyId,
       p8Pem: p8,
     );
+    return {'Authorization': 'Bearer $token'};
+  }
+
+  Future<List<AppSummary>> fetchApps(Team team) async {
+    final headers = await _authHeader(team);
 
     final results = <AppSummary>[];
     String path = '/v1/apps';
@@ -57,19 +64,7 @@ class AscApiClient {
     };
 
     while (true) {
-      final Response<Map<String, dynamic>> res;
-      try {
-        res = await _dio.getUri<Map<String, dynamic>>(
-          Uri.parse(_dio.options.baseUrl + path).replace(
-            queryParameters: query?.map((k, v) => MapEntry(k, '$v')),
-          ),
-          options: Options(headers: {'Authorization': 'Bearer $token'}),
-        );
-      } on DioException catch (e) {
-        throw _toAscException(e);
-      }
-
-      final body = res.data ?? const {};
+      final body = await _getJson(path, query: query, headers: headers);
       final data = (body['data'] as List<dynamic>? ?? const [])
           .cast<Map<String, dynamic>>()
           .map(AppSummary.fromAscJson);
@@ -83,6 +78,100 @@ class AscApiClient {
     }
 
     return results;
+  }
+
+  Future<List<AppStoreVersion>> fetchVersions(Team team, String appId) async {
+    final headers = await _authHeader(team);
+    final body = await _getJson(
+      '/v1/apps/$appId/appStoreVersions',
+      query: const {
+        'limit': 50,
+        'fields[appStoreVersions]': 'versionString,platform,appStoreState',
+      },
+      headers: headers,
+    );
+    return (body['data'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map(AppStoreVersion.fromAscJson)
+        .toList(growable: false);
+  }
+
+  Future<List<AppStoreVersionLocalization>> fetchLocalizations(
+    Team team,
+    String versionId,
+  ) async {
+    final headers = await _authHeader(team);
+    final body = await _getJson(
+      '/v1/appStoreVersions/$versionId/appStoreVersionLocalizations',
+      query: const {
+        'limit': 50,
+        'fields[appStoreVersionLocalizations]':
+            'locale,whatsNew,description,keywords,promotionalText,supportUrl,marketingUrl',
+      },
+      headers: headers,
+    );
+    return (body['data'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map(AppStoreVersionLocalization.fromAscJson)
+        .toList(growable: false);
+  }
+
+  Future<AppStoreVersionLocalization> updateWhatsNew(
+    Team team,
+    String localizationId,
+    String whatsNew,
+  ) async {
+    final headers = await _authHeader(team);
+    final body = await _patchJson(
+      '/v1/appStoreVersionLocalizations/$localizationId',
+      headers: headers,
+      payload: {
+        'data': {
+          'type': 'appStoreVersionLocalizations',
+          'id': localizationId,
+          'attributes': {'whatsNew': whatsNew},
+        }
+      },
+    );
+    final data = body['data'] as Map<String, dynamic>;
+    return AppStoreVersionLocalization.fromAscJson(data);
+  }
+
+  // ---- 내부 헬퍼 ----
+
+  Future<Map<String, dynamic>> _getJson(
+    String path, {
+    Map<String, dynamic>? query,
+    required Map<String, String> headers,
+  }) async {
+    try {
+      final res = await _dio.getUri<Map<String, dynamic>>(
+        Uri.parse(_dio.options.baseUrl + path).replace(
+          queryParameters: query?.map((k, v) => MapEntry(k, '$v')),
+        ),
+        options: Options(headers: headers),
+      );
+      return res.data ?? const {};
+    } on DioException catch (e) {
+      throw _toAscException(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> _patchJson(
+    String path, {
+    required Map<String, String> headers,
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      final res = await _dio.patchUri<Map<String, dynamic>>(
+        Uri.parse(_dio.options.baseUrl + path),
+        data: payload,
+        options: Options(headers: headers),
+      );
+      return res.data ?? const {};
+    } on DioException catch (e) {
+      throw _toAscException(e);
+    }
   }
 
   AscApiException _toAscException(DioException e) {
