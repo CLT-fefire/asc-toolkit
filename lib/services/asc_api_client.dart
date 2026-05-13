@@ -8,16 +8,25 @@ import 'jwt_signer.dart';
 import 'team_repository.dart';
 
 class AscApiException implements Exception {
-  AscApiException(this.message, {this.statusCode, this.detail});
+  AscApiException(
+    this.message, {
+    this.statusCode,
+    this.detail,
+    this.method,
+    this.path,
+  });
   final String message;
   final int? statusCode;
   final String? detail;
+  final String? method;
+  final String? path;
 
   @override
   String toString() {
     final code = statusCode == null ? '' : ' [HTTP $statusCode]';
+    final where = (method == null || path == null) ? '' : '\n  → $method $path';
     final extra = detail == null || detail!.isEmpty ? '' : '\n$detail';
-    return 'AscApiException$code: $message$extra';
+    return 'AscApiException$code: $message$where$extra';
   }
 }
 
@@ -153,7 +162,7 @@ class AscApiClient {
       );
       return res.data ?? const {};
     } on DioException catch (e) {
-      throw _toAscException(e);
+      throw _toAscException(e, method: 'GET', path: path);
     }
   }
 
@@ -170,11 +179,15 @@ class AscApiClient {
       );
       return res.data ?? const {};
     } on DioException catch (e) {
-      throw _toAscException(e);
+      throw _toAscException(e, method: 'PATCH', path: path);
     }
   }
 
-  AscApiException _toAscException(DioException e) {
+  AscApiException _toAscException(
+    DioException e, {
+    String? method,
+    String? path,
+  }) {
     final res = e.response;
     final status = res?.statusCode;
     final raw = res?.data;
@@ -189,6 +202,8 @@ class AscApiClient {
       e.message ?? 'App Store Connect API 호출 실패',
       statusCode: status,
       detail: detail,
+      method: method,
+      path: path,
     );
   }
 }
