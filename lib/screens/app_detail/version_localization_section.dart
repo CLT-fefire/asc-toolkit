@@ -19,6 +19,7 @@ class VersionLocalizationSection extends StatefulWidget {
     required this.onUpdated,
     this.parsedSection,
     this.parsedKeywords,
+    this.parsedWhatsNew,
   });
 
   final Team team;
@@ -34,6 +35,10 @@ class VersionLocalizationSection extends StatefulWidget {
   /// 키워드 텍스트 파일에서 파싱된 현재 로케일의 키워드. null이면 자동 적용 없음.
   /// 100자 초과 시 잘라서 적용.
   final String? parsedKeywords;
+
+  /// 붙여넣기 텍스트에서 파싱된 현재 로케일의 What's New. null이면 자동 적용 없음.
+  /// 첫 출시 버전이면 적용 skip.
+  final String? parsedWhatsNew;
 
   @override
   State<VersionLocalizationSection> createState() =>
@@ -85,12 +90,23 @@ class VersionLocalizationSectionState
             oldWidget.parsedSection?.description !=
                 widget.parsedSection?.description;
     final keywordsChanged = oldWidget.parsedKeywords != widget.parsedKeywords;
+    final whatsNewChanged = oldWidget.parsedWhatsNew != widget.parsedWhatsNew;
     if (locChanged || parsedChanged) {
       _applyParsedSection();
     }
     if (locChanged || keywordsChanged) {
       _applyParsedKeywords();
     }
+    if (locChanged || whatsNewChanged) {
+      _applyParsedWhatsNew();
+    }
+  }
+
+  void _applyParsedWhatsNew() {
+    if (widget.isFirstSubmission) return;
+    final raw = widget.parsedWhatsNew;
+    if (raw == null || raw.isEmpty) return;
+    _whatsNewCtrl.text = raw;
   }
 
   void _applyParsedSection() {

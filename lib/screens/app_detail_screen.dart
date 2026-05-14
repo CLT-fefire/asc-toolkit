@@ -11,12 +11,14 @@ import '../models/app_store_version_localization.dart';
 import '../models/app_summary.dart';
 import '../models/parsed_docx.dart';
 import '../models/parsed_keywords.dart';
+import '../models/parsed_whats_new.dart';
 import '../models/team.dart';
 import '../services/asc_api_client.dart';
 import '../services/docx_parser.dart';
 import '../services/keywords_parser.dart';
 import '../services/keywords_truncate.dart';
 import '../services/team_repository.dart';
+import '../services/whats_new_parser.dart';
 import 'app_detail/app_info_section.dart';
 import 'app_detail/notification_config_section.dart';
 import 'app_detail/review_detail_section.dart';
@@ -44,6 +46,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       AscApiClient(repository: widget.repository);
   final DocxParser _docxParser = DocxParser();
   final KeywordsParser _keywordsParser = KeywordsParser();
+  final WhatsNewParser _whatsNewParser = WhatsNewParser();
 
   // 워드 파싱 결과 (로케일별 섹션)
   ParsedDocx? _parsedDocx;
@@ -52,6 +55,10 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
   // 키워드 텍스트 파싱 결과 (로케일별 키워드)
   ParsedKeywordsFile? _parsedKeywords;
   String? _keywordsFileName;
+
+  // What's New 텍스트 파싱 결과 (로케일별 텍스트)
+  ParsedWhatsNew? _parsedWhatsNew;
+  String? _whatsNewRawText;
 
   bool _applyingAll = false;
 
@@ -386,6 +393,46 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     });
   }
 
+  // ---- What's New 붙여넣기 ----
+
+  Future<void> _pickWhatsNew() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => _WhatsNewPasteDialog(initial: _whatsNewRawText ?? ''),
+    );
+    if (!mounted || result == null) return;
+    final text = result.trim();
+    if (text.isEmpty) {
+      _clearWhatsNew();
+      return;
+    }
+    final parsed = _whatsNewParser.parse(
+      text,
+      _versionLocs.map((l) => l.locale),
+    );
+    setState(() {
+      _parsedWhatsNew = parsed;
+      _whatsNewRawText = text;
+    });
+    final summary = parsed.isEmpty
+        ? '인식된 로케일이 없습니다.'
+        : '${parsed.whatsNewByLocale.length}개 로케일 인식: '
+            '${parsed.whatsNewByLocale.keys.join(", ")}';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("What's New 파싱 완료 — $summary"),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _clearWhatsNew() {
+    setState(() {
+      _parsedWhatsNew = null;
+      _whatsNewRawText = null;
+    });
+  }
+
   /// 첨부된 파일(.docx + .txt)을 모든 로케일에 일괄 PATCH.
   ///
   /// 각 로케일에 대해:
@@ -401,13 +448,24 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
 
     final parsedDocx = _parsedDocx;
     final parsedKeywords = _parsedKeywords;
+    final parsedWhatsNew = _parsedWhatsNew;
+    final isFirstSub = _isFirstSubmission;
 
-    // ---- 버전 로컬라이제이션: description + keywords ----
+    // ---- 버전 로컬라이제이션: whatsNew + description + keywords ----
     for (final loc in _versionLocs) {
       final parsedSection = parsedDocx?.sections[loc.locale];
       final parsedKw = parsedKeywords?.keywordsFor(loc.locale);
+      final parsedWn = parsedWhatsNew?.whatsNewFor(loc.locale);
       final diff = <String, String>{};
 
+      if (!isFirstSub && parsedWn != null && parsedWn.isNotEmpty) {
+        if (parsedWn.length < 4) {
+          errors.add(
+              '${loc.locale} What\'s New: ASC 정책상 최소 4자 (현재 ${parsedWn.length}자)');
+        } else if (parsedWn != loc.whatsNew) {
+          diff['whatsNew'] = parsedWn;
+        }
+      }
       if (parsedSection?.description != null &&
           parsedSection!.description!.isNotEmpty &&
           parsedSection.description != loc.description) {
@@ -531,6 +589,12 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     return _parsedKeywords?.keywordsFor(locale);
   }
 
+  String? get _currentParsedWhatsNew {
+    final locale = _selectedLocale;
+    if (locale == null) return null;
+    return _parsedWhatsNew?.whatsNewFor(locale);
+  }
+
   // ---- Build ----
 
   @override
@@ -575,11 +639,14 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
             parsedDocx: _parsedDocx,
             keywordsFileName: _keywordsFileName,
             parsedKeywords: _parsedKeywords,
+            parsedWhatsNew: _parsedWhatsNew,
             applyingAll: _applyingAll,
             onPickDocx: _pickDocx,
             onClearDocx: _clearDocx,
             onPickKeywords: _pickKeywords,
             onClearKeywords: _clearKeywords,
+            onPickWhatsNew: _pickWhatsNew,
+            onClearWhatsNew: _clearWhatsNew,
             onApplyAll: _applyAll,
           ),
           const SizedBox(height: 24),
@@ -620,6 +687,8 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
               parsedDocxLocales: _parsedDocx?.sections.keys.toSet() ?? const {},
               parsedKeywordsLocales:
                   _parsedKeywords?.keywordsByLocale.keys.toSet() ?? const {},
+              parsedWhatsNewLocales:
+                  _parsedWhatsNew?.whatsNewByLocale.keys.toSet() ?? const {},
               onTap: _onSelectLocale,
             ),
           if (_error != null) ...[
@@ -635,6 +704,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
             onUpdated: _onVersionLocUpdated,
             parsedSection: _currentParsedSection,
             parsedKeywords: _currentParsedKeywords,
+            parsedWhatsNew: _currentParsedWhatsNew,
           ),
           const Divider(height: 64),
           AppInfoSection(
@@ -675,11 +745,14 @@ class _AssetAttachCard extends StatelessWidget {
     required this.parsedDocx,
     required this.keywordsFileName,
     required this.parsedKeywords,
+    required this.parsedWhatsNew,
     required this.applyingAll,
     required this.onPickDocx,
     required this.onClearDocx,
     required this.onPickKeywords,
     required this.onClearKeywords,
+    required this.onPickWhatsNew,
+    required this.onClearWhatsNew,
     required this.onApplyAll,
   });
 
@@ -687,16 +760,20 @@ class _AssetAttachCard extends StatelessWidget {
   final ParsedDocx? parsedDocx;
   final String? keywordsFileName;
   final ParsedKeywordsFile? parsedKeywords;
+  final ParsedWhatsNew? parsedWhatsNew;
   final bool applyingAll;
   final VoidCallback onPickDocx;
   final VoidCallback onClearDocx;
   final VoidCallback onPickKeywords;
   final VoidCallback onClearKeywords;
+  final VoidCallback onPickWhatsNew;
+  final VoidCallback onClearWhatsNew;
   final VoidCallback onApplyAll;
 
   bool get _hasAnyParsed =>
       (parsedDocx != null && !parsedDocx!.isEmpty) ||
-      (parsedKeywords != null && !parsedKeywords!.isEmpty);
+      (parsedKeywords != null && !parsedKeywords!.isEmpty) ||
+      (parsedWhatsNew != null && !parsedWhatsNew!.isEmpty);
 
   @override
   Widget build(BuildContext context) {
@@ -727,8 +804,8 @@ class _AssetAttachCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '.docx → 로케일별 이름·부제·설명 / .txt → 로케일별 키워드(100자 자동 절단).\n'
-            '변경된 필드에는 "수정" 뱃지가 붙고, "전체 변경 적용"으로 한 번에 PATCH 가능합니다.',
+            '.docx → 이름·부제·설명 / .txt → 키워드(100자 자동 절단) / 텍스트 → What\'s New.\n'
+            '변경된 필드에는 "수정" 뱃지가 붙고, "전체 변경 적용"으로 모든 로케일을 한 번에 PATCH합니다.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: scheme.onSurfaceVariant,
                 ),
@@ -765,6 +842,25 @@ class _AssetAttachCard extends StatelessWidget {
               prefix: '키워드 로케일:',
               chips: parsedKeywords!.keywordsByLocale.keys.toList(),
               errors: parsedKeywords!.unknownHeaders,
+            ),
+          ],
+          const SizedBox(height: 12),
+          _AttachRow(
+            icon: Icons.edit_note,
+            label: "What's New 붙여넣기",
+            fileName: parsedWhatsNew == null
+                ? null
+                : '${parsedWhatsNew!.whatsNewByLocale.length}개 로케일 인식됨',
+            disabled: applyingAll,
+            onPick: onPickWhatsNew,
+            onClear: onClearWhatsNew,
+          ),
+          if (parsedWhatsNew != null) ...[
+            const SizedBox(height: 8),
+            _ParsedSummary(
+              prefix: "What's New 로케일:",
+              chips: parsedWhatsNew!.whatsNewByLocale.keys.toList(),
+              errors: parsedWhatsNew!.unknownPrefixes,
             ),
           ],
           if (_hasAnyParsed) ...[
@@ -893,6 +989,76 @@ class _ParsedSummary extends StatelessWidget {
   }
 }
 
+/// What's New 텍스트를 붙여넣기 받는 다이얼로그.
+/// 헤더 prefix(국/영/일/기타 등) + 콜론 + 본문 라인을 자유롭게 받는다.
+class _WhatsNewPasteDialog extends StatefulWidget {
+  const _WhatsNewPasteDialog({required this.initial});
+  final String initial;
+
+  @override
+  State<_WhatsNewPasteDialog> createState() => _WhatsNewPasteDialogState();
+}
+
+class _WhatsNewPasteDialogState extends State<_WhatsNewPasteDialog> {
+  late final TextEditingController _ctrl =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text("What's New 텍스트 붙여넣기"),
+      content: SizedBox(
+        width: 520,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '한 줄에 `prefix: 본문` 형식. prefix는 `국 / 영 / 일 / 중 / 베 / 인` 등 '
+              '한 글자 또는 `한국어 / 영어`처럼 풀네임 모두 인식합니다. '
+              '`기타`는 명시되지 않은 모든 로케일에 적용되는 wildcard 입니다. '
+              '머리말(`메타데이터` 등)은 무시됩니다.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _ctrl,
+              maxLines: 12,
+              minLines: 8,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText:
+                    '메타데이터\n국: 앱 안정성이 개선되었습니다.\n영: App stability has been improved.\n'
+                    '일: アプリの安定性が改善されました\n기타: App stability has been improved.',
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(null),
+          child: const Text('취소'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_ctrl.text),
+          child: const Text('파싱'),
+        ),
+      ],
+    );
+  }
+}
+
 /// 로케일 탭바 — 가로 스크롤 칩.
 /// 각 칩에 파싱된 데이터 유무를 작은 점으로 표시.
 class _LocaleTabBar extends StatelessWidget {
@@ -902,6 +1068,7 @@ class _LocaleTabBar extends StatelessWidget {
     required this.disabled,
     required this.parsedDocxLocales,
     required this.parsedKeywordsLocales,
+    required this.parsedWhatsNewLocales,
     required this.onTap,
   });
 
@@ -910,6 +1077,7 @@ class _LocaleTabBar extends StatelessWidget {
   final bool disabled;
   final Set<String> parsedDocxLocales;
   final Set<String> parsedKeywordsLocales;
+  final Set<String> parsedWhatsNewLocales;
   final ValueChanged<String?> onTap;
 
   @override
@@ -926,6 +1094,7 @@ class _LocaleTabBar extends StatelessWidget {
           final isSelected = loc == selected;
           final hasDocx = parsedDocxLocales.contains(loc);
           final hasKw = parsedKeywordsLocales.contains(loc);
+          final hasWn = parsedWhatsNewLocales.contains(loc);
           return ChoiceChip(
             selected: isSelected,
             onSelected: disabled ? null : (_) => onTap(loc),
@@ -933,8 +1102,12 @@ class _LocaleTabBar extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(loc),
-                if (hasDocx) ...[
+                if (hasWn) ...[
                   const SizedBox(width: 6),
+                  _ParsedDot(color: scheme.secondary, tooltip: "What's New 파싱됨"),
+                ],
+                if (hasDocx) ...[
+                  const SizedBox(width: 4),
                   _ParsedDot(color: scheme.primary, tooltip: '워드 파싱됨'),
                 ],
                 if (hasKw) ...[
