@@ -251,7 +251,7 @@ class _AppInfoSectionState extends State<AppInfoSection> {
           ),
           items: [
             for (final c in widget.categories)
-              DropdownMenuItem(value: c.id, child: Text(categoryLabel(c.id))),
+              DropdownMenuItem(value: c.id, child: Text(categoryDisplayName(c.id))),
           ],
           onChanged: (widget.appInfo == null || _savingCats || !editable)
               ? null
@@ -272,7 +272,7 @@ class _AppInfoSectionState extends State<AppInfoSection> {
             for (final c in widget.categories)
               DropdownMenuItem<String?>(
                 value: c.id,
-                child: Text(categoryLabel(c.id)),
+                child: Text(categoryDisplayName(c.id)),
               ),
           ],
           onChanged: (widget.appInfo == null || _savingCats || !editable)
