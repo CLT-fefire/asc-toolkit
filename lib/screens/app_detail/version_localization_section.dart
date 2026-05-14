@@ -55,6 +55,7 @@ class VersionLocalizationSectionState
   final TextEditingController _marketingUrlCtrl = TextEditingController();
 
   bool _saving = false;
+  bool _expanded = true;
   Object? _error;
 
   @override
@@ -241,7 +242,10 @@ class VersionLocalizationSectionState
         SectionHeader(
           label: '버전 로컬라이제이션',
           updated: hasChanges,
+          expanded: _expanded,
+          onTap: () => setState(() => _expanded = !_expanded),
         ),
+        if (_expanded) ...[
         const SizedBox(height: 16),
         FieldLabel(
           "이 버전의 새로운 기능 (What's New)",
@@ -363,6 +367,7 @@ class VersionLocalizationSectionState
           saving: _saving,
           onPressed: widget.localization == null ? null : _save,
         ),
+        ],
       ],
     );
   }

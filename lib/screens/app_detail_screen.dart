@@ -814,7 +814,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
   }
 }
 
-class _AssetAttachCard extends StatelessWidget {
+class _AssetAttachCard extends StatefulWidget {
   const _AssetAttachCard({
     required this.docxFileName,
     required this.parsedDocx,
@@ -845,10 +845,17 @@ class _AssetAttachCard extends StatelessWidget {
   final VoidCallback onClearWhatsNew;
   final VoidCallback onApplyAll;
 
+  @override
+  State<_AssetAttachCard> createState() => _AssetAttachCardState();
+}
+
+class _AssetAttachCardState extends State<_AssetAttachCard> {
+  bool _expanded = true;
+
   bool get _hasAnyParsed =>
-      (parsedDocx != null && !parsedDocx!.isEmpty) ||
-      (parsedKeywords != null && !parsedKeywords!.isEmpty) ||
-      (parsedWhatsNew != null && !parsedWhatsNew!.isEmpty);
+      (widget.parsedDocx != null && !widget.parsedDocx!.isEmpty) ||
+      (widget.parsedKeywords != null && !widget.parsedKeywords!.isEmpty) ||
+      (widget.parsedWhatsNew != null && !widget.parsedWhatsNew!.isEmpty);
 
   @override
   Widget build(BuildContext context) {
@@ -864,19 +871,36 @@ class _AssetAttachCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.upload_file_outlined,
-                  color: scheme.onSecondaryContainer),
-              const SizedBox(width: 8),
-              Text(
-                '파일 자동 입력',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    _expanded ? Icons.expand_more : Icons.chevron_right,
+                    color: scheme.onSecondaryContainer,
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.upload_file_outlined,
+                      color: scheme.onSecondaryContainer),
+                  const SizedBox(width: 8),
+                  Text(
+                    '파일 자동 입력',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                  if (_hasAnyParsed && !_expanded) ...[
+                    const SizedBox(width: 12),
+                    const UpdatedBadge(),
+                  ],
+                ],
               ),
-            ],
+            ),
           ),
+          if (_expanded) ...[
           const SizedBox(height: 4),
           Text(
             '.docx → 이름·부제·설명 / .txt → 키워드(100자 자동 절단) / 텍스트 → What\'s New.\n'
@@ -889,53 +913,53 @@ class _AssetAttachCard extends StatelessWidget {
           _AttachRow(
             icon: Icons.description_outlined,
             label: '.docx 첨부',
-            fileName: docxFileName,
-            disabled: applyingAll,
-            onPick: onPickDocx,
-            onClear: onClearDocx,
+            fileName: widget.docxFileName,
+            disabled: widget.applyingAll,
+            onPick: widget.onPickDocx,
+            onClear: widget.onClearDocx,
           ),
-          if (parsedDocx != null) ...[
+          if (widget.parsedDocx != null) ...[
             const SizedBox(height: 8),
             _ParsedSummary(
               prefix: '워드 로케일:',
-              chips: parsedDocx!.sections.keys.toList(),
-              errors: parsedDocx!.unknownHeaders,
+              chips: widget.parsedDocx!.sections.keys.toList(),
+              errors: widget.parsedDocx!.unknownHeaders,
             ),
           ],
           const SizedBox(height: 12),
           _AttachRow(
             icon: Icons.tag,
             label: '.txt 키워드 첨부',
-            fileName: keywordsFileName,
-            disabled: applyingAll,
-            onPick: onPickKeywords,
-            onClear: onClearKeywords,
+            fileName: widget.keywordsFileName,
+            disabled: widget.applyingAll,
+            onPick: widget.onPickKeywords,
+            onClear: widget.onClearKeywords,
           ),
-          if (parsedKeywords != null) ...[
+          if (widget.parsedKeywords != null) ...[
             const SizedBox(height: 8),
             _ParsedSummary(
               prefix: '키워드 로케일:',
-              chips: parsedKeywords!.keywordsByLocale.keys.toList(),
-              errors: parsedKeywords!.unknownHeaders,
+              chips: widget.parsedKeywords!.keywordsByLocale.keys.toList(),
+              errors: widget.parsedKeywords!.unknownHeaders,
             ),
           ],
           const SizedBox(height: 12),
           _AttachRow(
             icon: Icons.edit_note,
             label: "What's New 붙여넣기",
-            fileName: parsedWhatsNew == null
+            fileName: widget.parsedWhatsNew == null
                 ? null
-                : '${parsedWhatsNew!.whatsNewByLocale.length}개 로케일 인식됨',
-            disabled: applyingAll,
-            onPick: onPickWhatsNew,
-            onClear: onClearWhatsNew,
+                : '${widget.parsedWhatsNew!.whatsNewByLocale.length}개 로케일 인식됨',
+            disabled: widget.applyingAll,
+            onPick: widget.onPickWhatsNew,
+            onClear: widget.onClearWhatsNew,
           ),
-          if (parsedWhatsNew != null) ...[
+          if (widget.parsedWhatsNew != null) ...[
             const SizedBox(height: 8),
             _ParsedSummary(
               prefix: "What's New 로케일:",
-              chips: parsedWhatsNew!.whatsNewByLocale.keys.toList(),
-              errors: parsedWhatsNew!.unknownPrefixes,
+              chips: widget.parsedWhatsNew!.whatsNewByLocale.keys.toList(),
+              errors: widget.parsedWhatsNew!.unknownPrefixes,
             ),
           ],
           if (_hasAnyParsed) ...[
@@ -943,17 +967,18 @@ class _AssetAttachCard extends StatelessWidget {
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
-                onPressed: applyingAll ? null : onApplyAll,
-                icon: applyingAll
+                onPressed: widget.applyingAll ? null : widget.onApplyAll,
+                icon: widget.applyingAll
                     ? const SizedBox(
                         width: 14,
                         height: 14,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.publish_outlined),
-                label: Text(applyingAll ? '적용 중…' : '전체 변경 적용'),
+                label: Text(widget.applyingAll ? '적용 중…' : '전체 변경 적용'),
               ),
             ),
+          ],
           ],
         ],
       ),

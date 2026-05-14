@@ -35,6 +35,7 @@ class _ReviewDetailSectionState extends State<ReviewDetailSection> {
   bool _demoRequired = false;
 
   bool _saving = false;
+  bool _expanded = true;
   Object? _error;
 
   @override
@@ -159,7 +160,10 @@ class _ReviewDetailSectionState extends State<ReviewDetailSection> {
         SectionHeader(
           label: '심사 정보 (App Review)',
           updated: _hasChanges,
+          expanded: _expanded,
+          onTap: () => setState(() => _expanded = !_expanded),
         ),
+        if (_expanded) ...[
         const SizedBox(height: 4),
         Text(
           'Apple 심사자에게 전달되는 정보. 선택한 버전에 귀속.',
@@ -325,6 +329,7 @@ class _ReviewDetailSectionState extends State<ReviewDetailSection> {
             onPressed: _save,
             label: '심사 정보 저장',
           ),
+        ],
         ],
       ],
     );

@@ -23,14 +23,28 @@ class SectionHeader extends StatelessWidget {
     super.key,
     required this.label,
     this.updated = false,
+    this.expanded,
+    this.onTap,
   });
   final String label;
   final bool updated;
 
+  /// null이면 토글 비활성(항상 펼침). true/false면 chevron 방향과 동기화.
+  final bool? expanded;
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final isToggle = onTap != null && expanded != null;
+    final row = Row(
       children: [
+        if (isToggle) ...[
+          Icon(
+            expanded! ? Icons.expand_more : Icons.chevron_right,
+            size: 24,
+          ),
+          const SizedBox(width: 4),
+        ],
         Text(
           label,
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -42,6 +56,17 @@ class SectionHeader extends StatelessWidget {
           const UpdatedBadge(),
         ],
       ],
+    );
+
+    if (!isToggle) return row;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: row,
+      ),
     );
   }
 }

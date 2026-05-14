@@ -37,6 +37,7 @@ class _NotificationConfigSectionState extends State<NotificationConfigSection> {
   String? _prodVersion;
   String? _sandboxVersion;
   bool _saving = false;
+  bool _expanded = true;
   Object? _error;
 
   @override
@@ -147,7 +148,10 @@ class _NotificationConfigSectionState extends State<NotificationConfigSection> {
         SectionHeader(
           label: 'App Store 서버 알림 (Server Notifications)',
           updated: _hasChanges,
+          expanded: _expanded,
+          onTap: () => setState(() => _expanded = !_expanded),
         ),
+        if (_expanded) ...[
         const SizedBox(height: 4),
         Text(
           'IAP 구독·결제 이벤트를 받을 서버 endpoint. V2 권장. 프로덕션과 샌드박스는 분리.',
@@ -298,6 +302,7 @@ class _NotificationConfigSectionState extends State<NotificationConfigSection> {
           onPressed: widget.config == null ? null : _save,
           label: '서버 알림 URL 저장',
         ),
+        ],
       ],
     );
   }

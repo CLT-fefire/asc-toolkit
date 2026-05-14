@@ -55,6 +55,8 @@ class AppInfoSectionState extends State<AppInfoSection> {
   bool _savingCats = false;
   Object? _catsError;
 
+  bool _expanded = true;
+
   @override
   void initState() {
     super.initState();
@@ -272,7 +274,10 @@ class AppInfoSectionState extends State<AppInfoSection> {
         SectionHeader(
           label: '앱 정보',
           updated: hasLocChanges || hasCatsChanges,
+          expanded: _expanded,
+          onTap: () => setState(() => _expanded = !_expanded),
         ),
+        if (_expanded) ...[
         const SizedBox(height: 16),
         if (widget.appInfo != null && !editable) ...[
           _ReadOnlyAppInfoNotice(stateLabel: stateLabel),
@@ -414,6 +419,7 @@ class AppInfoSectionState extends State<AppInfoSection> {
               : _saveCategories,
           label: '카테고리 저장',
         ),
+        ],
       ],
     );
   }
