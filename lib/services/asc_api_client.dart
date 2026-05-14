@@ -538,6 +538,32 @@ class AscApiClient {
     );
   }
 
+  /// commit 직후 ASC 가 데이터를 정상 수신했는지 확인.
+  ///
+  /// 반환 값은 ASC `assetDeliveryState.state` ─ 대표 값:
+  /// - `AWAITING_UPLOAD`: PUT 미수신 (= 사실상 실패)
+  /// - `UPLOAD_COMPLETE`: PUT 수신, ASC 처리 대기
+  /// - `COMPLETE`: 사용 가능
+  /// - `FAILED`: ASC 처리 실패
+  Future<String> fetchScreenshotDeliveryState(
+    Team team,
+    String screenshotId,
+  ) async {
+    final headers = await _authHeader(team);
+    final body = await _getJson(
+      '/v1/appScreenshots/$screenshotId',
+      query: const {'fields[appScreenshots]': 'assetDeliveryState'},
+      headers: headers,
+    );
+    final data = body['data'] as Map<String, dynamic>?;
+    final attrs = (data?['attributes'] as Map<String, dynamic>?) ?? const {};
+    final asset = attrs['assetDeliveryState'];
+    if (asset is Map<String, dynamic>) {
+      return (asset['state'] as String?) ?? '';
+    }
+    return '';
+  }
+
   /// set 안 스크린샷 순서 명시. ASC 자동 정렬 안전망.
   Future<void> reorderScreenshotsInSet(
     Team team,

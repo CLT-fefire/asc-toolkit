@@ -258,7 +258,32 @@ class ScreenshotUploader {
     }
 
     await api.commitScreenshot(team, reserved.id, md5Hex);
+
+    // commit 만으로는 ASC 가 데이터를 정상 수신했는지 알 수 없음.
+    // assetDeliveryState 가 AWAITING_UPLOAD 인 경우 = PUT 단계에서 데이터 미도달.
+    // (옵션 D 첫 검증에서 정확히 이 시나리오로 모든 이미지가 비어 있었음)
+    //
+    // commit 직후엔 ASC 가 state 를 갱신하기 전일 수 있어 한 번 짧게 재시도한다.
+    final state = await _confirmDelivery(team, reserved.id);
+    if (state == 'AWAITING_UPLOAD' || state == 'FAILED') {
+      throw Exception(
+        '업로드 후 ASC 상태가 비정상: $state '
+        '(presigned PUT 단계에서 데이터가 도달하지 않았을 가능성)',
+      );
+    }
+
     return reserved.id;
+  }
+
+  /// commit 직후 ASC `assetDeliveryState.state` 를 두 번까지 확인.
+  /// 첫 GET 이 AWAITING_UPLOAD/빈 문자열이면 500ms 대기 후 한 번 더 시도한다.
+  Future<String> _confirmDelivery(Team team, String screenshotId) async {
+    var state = await api.fetchScreenshotDeliveryState(team, screenshotId);
+    if (state == 'AWAITING_UPLOAD' || state.isEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      state = await api.fetchScreenshotDeliveryState(team, screenshotId);
+    }
+    return state;
   }
 
   Future<void> _putBinary(
@@ -267,16 +292,27 @@ class ScreenshotUploader {
     Uint8List bytes,
   ) async {
     try {
-      await _uploadDio.putUri<dynamic>(
+      final res = await _uploadDio.putUri<dynamic>(
         Uri.parse(url),
-        data: Stream.value(bytes),
+        // Uint8List 를 직접 전달해야 dio 가 contentLength/body 를 일관되게 보냄.
+        // Stream.value(bytes) 로 보내면 일부 dio 버전에서 chunked 와 명시적 contentLength
+        // 가 충돌해 빈 body 가 가는 사례가 있음 (실제 옵션 D 첫 검증에서 49장이 모두
+        // 코드 흐름은 통과했지만 ASC 에 데이터 미도달).
+        data: bytes,
         options: Options(
-          headers: {
-            ...headers,
-            Headers.contentLengthHeader: bytes.length,
-          },
+          headers: headers,
+          // 명시 — 일부 S3 호환 백엔드는 missing length 시 0 bytes 로 처리.
+          contentType: headers['Content-Type'] ?? 'application/octet-stream',
+          responseType: ResponseType.plain,
+          // 2xx 외엔 throw.
+          validateStatus: (s) => s != null && s >= 200 && s < 300,
         ),
       );
+      // 추가 안전망: 200~204 범위만 통과
+      final status = res.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        throw Exception('presigned PUT 실패: HTTP $status');
+      }
     } on DioException catch (e) {
       throw Exception(
         'presigned PUT 실패 [${e.response?.statusCode}]: ${e.message ?? e.toString()}',
