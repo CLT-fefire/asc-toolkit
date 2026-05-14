@@ -113,6 +113,22 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     return locs.first;
   }
 
+  /// 이 앱이 한 번도 App Store에 출시(승인·게시)된 적이 없으면 true.
+  /// 첫 출시 버전에서는 ASC가 'What's New' 입력을 허용하지 않으므로 미리 잠금.
+  bool get _isFirstSubmission {
+    if (_versions.isEmpty) return false; // 판단 불가 — 정상 흐름으로 둠
+    const everPublished = {
+      'READY_FOR_SALE',
+      'READY_FOR_DISTRIBUTION',
+      'PENDING_DEVELOPER_RELEASE',
+      'PENDING_APPLE_RELEASE',
+      'REPLACED_WITH_NEW_VERSION',
+      'DEVELOPER_REMOVED_FROM_SALE',
+      'NOT_APPLICABLE',
+    };
+    return !_versions.any((v) => everPublished.contains(v.appStoreState));
+  }
+
   void _onSelectVersion(AppStoreVersion? v) {
     if (v == null || v.id == _selectedVersion?.id) return;
     setState(() => _selectedVersion = v);
@@ -238,16 +254,23 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
           const SizedBox(height: 24),
           _SectionLabel("이 버전의 새로운 기능 (What's New)"),
           const SizedBox(height: 8),
+          if (_isFirstSubmission) ...[
+            const _FirstSubmissionNotice(),
+            const SizedBox(height: 8),
+          ],
           TextField(
             controller: _whatsNewCtrl,
-            enabled: _selectedLocalization != null && !_saving,
+            enabled: _selectedLocalization != null &&
+                !_saving &&
+                !_isFirstSubmission,
             maxLines: 10,
             minLines: 6,
             maxLength: 4000,
-            decoration: const InputDecoration(
-              hintText:
-                  '예: 버그 수정 및 성능 개선.\n   - 새 기능 …\n   - 알려진 이슈 …',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              hintText: _isFirstSubmission
+                  ? '첫 출시 버전이라 입력이 비활성화되어 있습니다.'
+                  : '예: 버그 수정 및 성능 개선.\n   - 새 기능 …\n   - 알려진 이슈 …',
+              border: const OutlineInputBorder(),
               alignLabelWithHint: true,
             ),
           ),
@@ -259,7 +282,9 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
           Align(
             alignment: Alignment.centerRight,
             child: FilledButton.icon(
-              onPressed: (_selectedLocalization == null || _saving)
+              onPressed: (_selectedLocalization == null ||
+                      _saving ||
+                      _isFirstSubmission)
                   ? null
                   : _save,
               icon: _saving
@@ -325,6 +350,38 @@ class _AppMetaCard extends StatelessWidget {
                 .textTheme
                 .bodySmall
                 ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FirstSubmissionNotice extends StatelessWidget {
+  const _FirstSubmissionNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.tertiary.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, color: scheme.onTertiaryContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "첫 출시 버전입니다. Apple 정책상 'What's New'(이 버전의 새로운 기능)는 "
+              "두 번째 버전부터 입력 가능합니다. 이 앱은 아직 한 번도 게시된 적이 없어 "
+              "입력이 비활성화되어 있습니다.",
+              style: TextStyle(color: scheme.onTertiaryContainer),
+            ),
           ),
         ],
       ),
