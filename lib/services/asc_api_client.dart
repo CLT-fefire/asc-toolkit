@@ -4,6 +4,8 @@ import '../models/app_category.dart';
 import '../models/app_info.dart';
 import '../models/app_info_localization.dart';
 import '../models/app_notification_config.dart';
+import '../models/app_screenshot.dart';
+import '../models/app_screenshot_set.dart';
 import '../models/app_store_review_detail.dart';
 import '../models/app_store_version.dart';
 import '../models/app_store_version_localization.dart';
@@ -396,6 +398,165 @@ class AscApiClient {
     );
   }
 
+  // ---- 스크린샷 (옵션 D) ----
+
+  /// 한 [vlocId] 의 [displayType] set 목록. 보통 0 또는 1개.
+  Future<List<AppScreenshotSet>> fetchScreenshotSets(
+    Team team,
+    String vlocId, {
+    String? displayType,
+  }) async {
+    final headers = await _authHeader(team);
+    final query = <String, dynamic>{
+      'limit': 50,
+      'fields[appScreenshotSets]': 'screenshotDisplayType',
+    };
+    if (displayType != null) {
+      query['filter[screenshotDisplayType]'] = displayType;
+    }
+    final body = await _getJson(
+      '/v1/appStoreVersionLocalizations/$vlocId/appScreenshotSets',
+      query: query,
+      headers: headers,
+    );
+    return (body['data'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map(AppScreenshotSet.fromAscJson)
+        .toList(growable: false);
+  }
+
+  /// 해당 vlocId·displayType 의 set 을 새로 생성.
+  Future<AppScreenshotSet> createScreenshotSet(
+    Team team,
+    String vlocId,
+    String displayType,
+  ) async {
+    final headers = await _authHeader(team);
+    final body = await _postJson(
+      '/v1/appScreenshotSets',
+      headers: headers,
+      payload: {
+        'data': {
+          'type': 'appScreenshotSets',
+          'attributes': {'screenshotDisplayType': displayType},
+          'relationships': {
+            'appStoreVersionLocalization': {
+              'data': {
+                'type': 'appStoreVersionLocalizations',
+                'id': vlocId,
+              }
+            }
+          },
+        }
+      },
+    );
+    return AppScreenshotSet.fromAscJson(
+      body['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// set 안의 스크린샷 id 목록 (삭제 또는 reorder 용).
+  Future<List<String>> fetchScreenshotIdsInSet(
+    Team team,
+    String setId,
+  ) async {
+    final headers = await _authHeader(team);
+    final body = await _getJson(
+      '/v1/appScreenshotSets/$setId/appScreenshots',
+      query: const {
+        'limit': 50,
+        'fields[appScreenshots]': 'fileName',
+      },
+      headers: headers,
+    );
+    return (body['data'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map((j) => j['id'] as String)
+        .toList(growable: false);
+  }
+
+  /// 개별 스크린샷 삭제.
+  Future<void> deleteScreenshot(Team team, String screenshotId) async {
+    final headers = await _authHeader(team);
+    await _deleteJson(
+      '/v1/appScreenshots/$screenshotId',
+      headers: headers,
+    );
+  }
+
+  /// reserve: 업로드 op 목록을 받음. PUT/commit 은 호출자가 처리.
+  Future<AppScreenshot> reserveScreenshot(
+    Team team,
+    String setId,
+    String fileName,
+    int fileSize,
+  ) async {
+    final headers = await _authHeader(team);
+    final body = await _postJson(
+      '/v1/appScreenshots',
+      headers: headers,
+      payload: {
+        'data': {
+          'type': 'appScreenshots',
+          'attributes': {
+            'fileName': fileName,
+            'fileSize': fileSize,
+          },
+          'relationships': {
+            'appScreenshotSet': {
+              'data': {'type': 'appScreenshotSets', 'id': setId}
+            }
+          },
+        }
+      },
+    );
+    return AppScreenshot.fromAscJson(
+      body['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// commit: PUT 완료 후 `uploaded:true` + md5 체크섬 PATCH.
+  Future<void> commitScreenshot(
+    Team team,
+    String screenshotId,
+    String md5HexChecksum,
+  ) async {
+    final headers = await _authHeader(team);
+    await _patchJson(
+      '/v1/appScreenshots/$screenshotId',
+      headers: headers,
+      payload: {
+        'data': {
+          'type': 'appScreenshots',
+          'id': screenshotId,
+          'attributes': {
+            'uploaded': true,
+            'sourceFileChecksum': md5HexChecksum,
+          },
+        }
+      },
+    );
+  }
+
+  /// set 안 스크린샷 순서 명시. ASC 자동 정렬 안전망.
+  Future<void> reorderScreenshotsInSet(
+    Team team,
+    String setId,
+    List<String> orderedIds,
+  ) async {
+    final headers = await _authHeader(team);
+    await _patchJson(
+      '/v1/appScreenshotSets/$setId/relationships/appScreenshots',
+      headers: headers,
+      payload: {
+        'data': [
+          for (final id in orderedIds)
+            {'type': 'appScreenshots', 'id': id},
+        ],
+      },
+    );
+  }
+
   // ---- 내부 헬퍼 ----
 
   Future<Map<String, dynamic>> _getJson(
@@ -430,6 +591,37 @@ class AscApiClient {
       return res.data ?? const {};
     } on DioException catch (e) {
       throw _toAscException(e, method: 'PATCH', path: path);
+    }
+  }
+
+  Future<Map<String, dynamic>> _postJson(
+    String path, {
+    required Map<String, String> headers,
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      final res = await _dio.postUri<Map<String, dynamic>>(
+        Uri.parse(_dio.options.baseUrl + path),
+        data: payload,
+        options: Options(headers: headers),
+      );
+      return res.data ?? const {};
+    } on DioException catch (e) {
+      throw _toAscException(e, method: 'POST', path: path);
+    }
+  }
+
+  Future<void> _deleteJson(
+    String path, {
+    required Map<String, String> headers,
+  }) async {
+    try {
+      await _dio.deleteUri<dynamic>(
+        Uri.parse(_dio.options.baseUrl + path),
+        options: Options(headers: headers),
+      );
+    } on DioException catch (e) {
+      throw _toAscException(e, method: 'DELETE', path: path);
     }
   }
 
