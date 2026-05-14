@@ -492,7 +492,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
         _onVersionLocUpdated(updated);
         patched++;
       } catch (e) {
-        errors.add('${loc.locale} 버전 정보: $e');
+        errors.add('${loc.locale} 버전 정보: ${_friendlyError(e)}');
       }
     }
 
@@ -506,15 +506,30 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
           continue;
         }
         final diff = <String, String>{};
+
+        // 사전 검증 — 30자 제한을 클라이언트에서 미리 컷.
+        // ASC에 보내봐야 400 떨어지고 다른 필드 PATCH도 영향 받음.
         if (parsedSection.name != null &&
             parsedSection.name!.isNotEmpty &&
             parsedSection.name != loc.name) {
-          diff['name'] = parsedSection.name!;
+          if (parsedSection.name!.length > 30) {
+            errors.add(
+                '${loc.locale} 앱 이름: 30자 초과 (${parsedSection.name!.length}자) — '
+                '"${parsedSection.name}"');
+          } else {
+            diff['name'] = parsedSection.name!;
+          }
         }
         if (parsedSection.subtitle != null &&
             parsedSection.subtitle!.isNotEmpty &&
             parsedSection.subtitle != loc.subtitle) {
-          diff['subtitle'] = parsedSection.subtitle!;
+          if (parsedSection.subtitle!.length > 30) {
+            errors.add(
+                '${loc.locale} 부제: 30자 초과 (${parsedSection.subtitle!.length}자) — '
+                '"${parsedSection.subtitle}"');
+          } else {
+            diff['subtitle'] = parsedSection.subtitle!;
+          }
         }
         if (diff.isEmpty) {
           skipped++;
@@ -530,7 +545,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
           _onAppInfoLocUpdated(updated);
           patched++;
         } catch (e) {
-          errors.add('${loc.locale} 앱 정보: $e');
+          errors.add('${loc.locale} 앱 정보: ${_friendlyError(e)}');
         }
       }
     } else if (parsedDocx != null && _appInfoLocs.isNotEmpty) {
@@ -561,20 +576,35 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     if (errors.isNotEmpty && mounted) {
       await showDialog<void>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('일부 적용 실패'),
-          content: SingleChildScrollView(
-            child: Text(errors.join('\n\n')),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('닫기'),
-            ),
-          ],
-        ),
+        builder: (ctx) => _FailuresDialog(errors: errors),
       );
     }
+  }
+
+  /// 사용자에게 보여줄 ASC 에러 한 줄. AscApiException의 detail이 있으면
+  /// 그쪽을 우선하고, 흔한 패턴은 좀 더 친화적으로 다시 쓴다.
+  String _friendlyError(Object e) {
+    String text;
+    if (e is AscApiException) {
+      final base = e.detail ?? e.message;
+      text = e.statusCode == null ? base : '[HTTP ${e.statusCode}] $base';
+    } else {
+      text = e.toString();
+    }
+    // 같은 이름의 앱이 다른 곳에서 이미 쓰이는 경우 — ASC 정책이라 클라에서 못 푸니
+    // 사용자에게 명확히 액션을 알려줌.
+    if (text.contains('already being used for another app')) {
+      return '이름 중복 — 같은 팀의 다른 앱이 이미 동일한 이름을 사용 중입니다. '
+          'App Store Connect 웹에서 충돌하는 앱의 이름을 바꾸거나, '
+          '이번에 적용할 이름을 다르게 지정해 주세요.';
+    }
+    if (text.contains("cannot be longer than '30' characters")) {
+      return '30자 초과 — name/subtitle은 최대 30자입니다.';
+    }
+    if (text.contains("cannot be longer than '4000' characters")) {
+      return '4000자 초과 — description/whatsNew은 최대 4000자입니다.';
+    }
+    return text;
   }
 
   ParsedLocaleSection? get _currentParsedSection {
@@ -984,6 +1014,60 @@ class _ParsedSummary extends StatelessWidget {
               ),
             ),
         ],
+      ],
+    );
+  }
+}
+
+/// "전체 변경 적용" 결과 중 실패만 모아 한 줄씩 가독성 있게 보여주는 다이얼로그.
+/// 각 줄은 `로케일 + 필드: 사유` 형식이라 SelectableText로 복사 가능하게 한다.
+class _FailuresDialog extends StatelessWidget {
+  const _FailuresDialog({required this.errors});
+  final List<String> errors;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: Row(
+        children: [
+          Icon(Icons.warning_amber_outlined, color: scheme.error),
+          const SizedBox(width: 8),
+          Text('일부 적용 실패 (${errors.length}건)'),
+        ],
+      ),
+      content: SizedBox(
+        width: 560,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final err in errors) ...[
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: scheme.errorContainer.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: SelectableText(
+                    err,
+                    style: TextStyle(
+                      color: scheme.onErrorContainer,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('닫기'),
+        ),
       ],
     );
   }
