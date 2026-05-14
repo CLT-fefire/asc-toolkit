@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import '../models/app_category.dart';
 import '../models/app_info.dart';
 import '../models/app_info_localization.dart';
+import '../models/app_notification_config.dart';
 import '../models/app_store_review_detail.dart';
 import '../models/app_store_version.dart';
 import '../models/app_store_version_localization.dart';
@@ -293,6 +294,53 @@ class AscApiClient {
           'relationships': relationships,
         }
       },
+    );
+  }
+
+  // ---- App Store Server Notifications V2 ----
+
+  /// 앱의 알림 URL 설정 (production + sandbox).
+  Future<AppNotificationConfig> fetchAppNotificationConfig(
+    Team team,
+    String appId,
+  ) async {
+    final headers = await _authHeader(team);
+    final body = await _getJson(
+      '/v1/apps/$appId',
+      query: const {
+        'fields[apps]': 'subscriptionStatusUrl,subscriptionStatusUrlVersion,'
+            'subscriptionStatusUrlForSandbox,'
+            'subscriptionStatusUrlVersionForSandbox',
+      },
+      headers: headers,
+    );
+    return AppNotificationConfig.fromAscJson(
+      body['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// 알림 URL/Version PATCH. [attributes]에 변경된 필드만 포함.
+  Future<AppNotificationConfig> updateAppNotificationConfig(
+    Team team,
+    String appId,
+    Map<String, String?> attributes,
+  ) async {
+    assert(attributes.isNotEmpty,
+        'updateAppNotificationConfig: 빈 변경 호출 불가');
+    final headers = await _authHeader(team);
+    final body = await _patchJson(
+      '/v1/apps/$appId',
+      headers: headers,
+      payload: {
+        'data': {
+          'type': 'apps',
+          'id': appId,
+          'attributes': attributes,
+        }
+      },
+    );
+    return AppNotificationConfig.fromAscJson(
+      body['data'] as Map<String, dynamic>,
     );
   }
 
