@@ -97,10 +97,17 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       final appInfos = results[1] as List<AppInfo>;
       final categories = results[2] as List<AppCategory>;
 
+      // editable AppInfo 우선 (PREPARE_FOR_SUBMISSION 등).
+      // 없으면 LIVE(READY_FOR_DISTRIBUTION) 같은 read-only AppInfo로 fallback.
+      final editableInfo = appInfos.where((i) => i.isEditable);
+      final pickedAppInfo = editableInfo.isNotEmpty
+          ? editableInfo.first
+          : (appInfos.isNotEmpty ? appInfos.first : null);
+
       setState(() {
         _versions = versions;
         _selectedVersion = versions.isNotEmpty ? versions.first : null;
-        _selectedAppInfo = appInfos.isNotEmpty ? appInfos.first : null;
+        _selectedAppInfo = pickedAppInfo;
         _categories = categories;
       });
 
@@ -233,9 +240,15 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     // 카테고리 PATCH는 응답에 attributes만 와서 relationships id가 안 옴 → AppInfo 재조회
     final infos = await _client.fetchAppInfos(widget.team, widget.app.id);
     if (!mounted) return;
-    setState(() {
-      _selectedAppInfo = infos.isNotEmpty ? infos.first : _selectedAppInfo;
-    });
+    final currentId = _selectedAppInfo?.id;
+    final refreshed =
+        infos.where((i) => i.id == currentId).cast<AppInfo?>().firstWhere(
+              (_) => true,
+              orElse: () => null,
+            );
+    if (refreshed != null) {
+      setState(() => _selectedAppInfo = refreshed);
+    }
   }
 
   void _onReviewDetailUpdated(AppStoreReviewDetail updated) {

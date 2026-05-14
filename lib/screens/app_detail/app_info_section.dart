@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../data/app_category_display_names.dart';
 import '../../models/app_category.dart';
 import '../../models/app_info.dart';
 import '../../models/app_info_localization.dart';
@@ -180,6 +181,9 @@ class _AppInfoSectionState extends State<AppInfoSection> {
 
   @override
   Widget build(BuildContext context) {
+    final editable = widget.appInfo?.isEditable ?? false;
+    final stateLabel = widget.appInfo?.state ?? '';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -191,10 +195,14 @@ class _AppInfoSectionState extends State<AppInfoSection> {
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
         ),
+        if (widget.appInfo != null && !editable) ...[
+          const SizedBox(height: 8),
+          _ReadOnlyAppInfoNotice(stateLabel: stateLabel),
+        ],
         const SizedBox(height: 12),
         TextField(
           controller: _nameCtrl,
-          enabled: widget.localization != null && !_savingLoc,
+          enabled: widget.localization != null && !_savingLoc && editable,
           maxLength: 30,
           decoration: const InputDecoration(
             labelText: '이름 (Name)',
@@ -205,7 +213,7 @@ class _AppInfoSectionState extends State<AppInfoSection> {
         const SizedBox(height: 8),
         TextField(
           controller: _subtitleCtrl,
-          enabled: widget.localization != null && !_savingLoc,
+          enabled: widget.localization != null && !_savingLoc && editable,
           maxLength: 30,
           decoration: const InputDecoration(
             labelText: '부제 (Subtitle)',
@@ -220,7 +228,9 @@ class _AppInfoSectionState extends State<AppInfoSection> {
         const SizedBox(height: 12),
         SaveButton(
           saving: _savingLoc,
-          onPressed: widget.localization == null ? null : _saveLocalization,
+          onPressed: (widget.localization == null || !editable)
+              ? null
+              : _saveLocalization,
           label: '이름/부제 저장',
         ),
         const SizedBox(height: 32),
@@ -241,9 +251,9 @@ class _AppInfoSectionState extends State<AppInfoSection> {
           ),
           items: [
             for (final c in widget.categories)
-              DropdownMenuItem(value: c.id, child: Text(c.id)),
+              DropdownMenuItem(value: c.id, child: Text(categoryLabel(c.id))),
           ],
-          onChanged: (widget.appInfo == null || _savingCats)
+          onChanged: (widget.appInfo == null || _savingCats || !editable)
               ? null
               : (v) => setState(() => _selectedPrimary = v),
         ),
@@ -260,9 +270,12 @@ class _AppInfoSectionState extends State<AppInfoSection> {
               child: Text('(없음)'),
             ),
             for (final c in widget.categories)
-              DropdownMenuItem<String?>(value: c.id, child: Text(c.id)),
+              DropdownMenuItem<String?>(
+                value: c.id,
+                child: Text(categoryLabel(c.id)),
+              ),
           ],
-          onChanged: (widget.appInfo == null || _savingCats)
+          onChanged: (widget.appInfo == null || _savingCats || !editable)
               ? null
               : (v) => setState(() => _selectedSecondary = v),
         ),
@@ -273,10 +286,46 @@ class _AppInfoSectionState extends State<AppInfoSection> {
         const SizedBox(height: 12),
         SaveButton(
           saving: _savingCats,
-          onPressed: widget.appInfo == null ? null : _saveCategories,
+          onPressed: (widget.appInfo == null || !editable)
+              ? null
+              : _saveCategories,
           label: '카테고리 저장',
         ),
       ],
+    );
+  }
+}
+
+/// LIVE/심사 중 등 read-only 상태의 AppInfo에서 편집 시도를 차단하는 안내.
+class _ReadOnlyAppInfoNotice extends StatelessWidget {
+  const _ReadOnlyAppInfoNotice({required this.stateLabel});
+  final String stateLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.lock_outline, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '이 App Info는 현재 $stateLabel 상태라 이름·부제·카테고리를 수정할 수 없습니다.\n'
+              "이미 출시된 정보(read-only)이거나 심사 중인 경우, App Store Connect 웹에서 '새 버전 추가'를 통해 "
+              '편집 가능한 App Info(PREPARE_FOR_SUBMISSION)를 먼저 만들어야 합니다.',
+              style: TextStyle(color: scheme.onSurfaceVariant),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

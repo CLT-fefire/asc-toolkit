@@ -179,8 +179,9 @@ class AscApiClient {
       query: const {
         'limit': 50,
         'include': 'primaryCategory,secondaryCategory',
+        // state(신)와 appStoreState(구) 둘 다 요청 — 모델에서 fallback 처리
         'fields[appInfos]':
-            'appStoreState,primaryCategory,secondaryCategory',
+            'state,appStoreState,primaryCategory,secondaryCategory',
       },
       headers: headers,
     );
