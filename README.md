@@ -50,24 +50,30 @@ flutter run -d macos
 lib/
 ├── main.dart                       # 진입점 + MaterialApp
 ├── models/
-│   ├── team.dart                   # 팀 메타 모델
-│   └── app_summary.dart            # ASC /v1/apps 응답
+│   ├── team.dart                          # 팀 메타 모델
+│   ├── app_summary.dart                   # ASC /v1/apps 응답
+│   ├── app_store_version.dart             # 버전 (PREPARE_FOR_SUBMISSION 등)
+│   └── app_store_version_localization.dart  # 로케일별 whatsNew/설명 등
 ├── services/
-│   ├── team_repository.dart        # Keychain 기반 팀 CRUD
+│   ├── team_repository.dart        # 파일 기반 팀 CRUD (~/Library/Application Support/asc_toolkit/teams.json)
 │   ├── jwt_signer.dart             # ES256 JWT 생성
-│   └── asc_api_client.dart         # ASC API 호출 (dio, 페이지네이션 포함)
+│   └── asc_api_client.dart         # ASC API 호출 (dio, 페이지네이션, 에러 매핑)
 └── screens/
     ├── teams_screen.dart           # 팀 리스트
     ├── team_form_screen.dart       # 팀 추가/편집 폼
-    └── apps_screen.dart            # 선택된 팀의 앱 목록
+    ├── apps_screen.dart            # 선택된 팀의 앱 목록
+    └── app_detail_screen.dart      # 버전/로케일 선택 + whatsNew 편집
 ```
 
-## 보안 메모
+## 저장소 & 보안 메모
 
-- .p8 키 본문은 macOS Keychain (`flutter_secure_storage`)에 저장
-- JWT는 매 요청 직전 생성 (TTL 18분, ASC 권장 최대 20분)
+- **저장 위치**: `~/Library/Application Support/asc_toolkit/teams.json`
+  - 디렉토리 chmod 700, 파일 chmod 600 (현재 macOS 사용자만 읽기)
+  - fastlane이 `AuthKey_*.p8`을 평문 파일로 두는 것과 동등한 보안 수준
+  - macOS Keychain을 쓰지 않는 이유: ad-hoc 코드사이닝 환경에서 매 실행마다 "키체인 액세스 허용" 다이얼로그가 반복되는 문제 우회
+- **JWT**: 매 요청 직전 생성 (TTL 18분, ASC 권장 최대 20분)
 - **App Sandbox 비활성화** 상태로 빌드합니다.
-  - 이유: Sandbox 환경에서 Keychain 쓰기는 `keychain-access-groups` + Apple Developer Team 자동 사인이 필수인데, 사내 도구라 굳이 그 셋업을 가져갈 필요가 없음
+  - Mac App Store 배포 안 함. 사내 도구로 사용
   - Mac App Store 배포가 필요해지면 Sandbox 다시 켜고 자동 사인 + keychain-access-groups 추가 필요
 - 외부 배포는 `.app` 또는 `.dmg`로 충분합니다. (Gatekeeper 경고는 우클릭 → 열기로 1회 우회 또는 notarize)
 
