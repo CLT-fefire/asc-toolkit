@@ -4,6 +4,7 @@ import '../../models/app_store_version_localization.dart';
 import '../../models/parsed_docx.dart';
 import '../../models/team.dart';
 import '../../services/asc_api_client.dart';
+import '../../services/keywords_truncate.dart';
 import 'section_widgets.dart';
 
 /// `appStoreVersionLocalizations` PATCH 영역.
@@ -104,23 +105,7 @@ class VersionLocalizationSectionState
     final raw = widget.parsedKeywords;
     if (raw == null || raw.isEmpty) return;
     // ASC 키워드 100자 제한 — 콤마 단위 토큰을 유지하면서 잘라낸다.
-    _keywordsCtrl.text = _truncateKeywords(raw, 100);
-  }
-
-  /// 콤마 구분 키워드 문자열을 [max]자 이내로 자른다.
-  /// 마지막에 잘리는 토큰이 부분 단어가 되지 않도록, 콤마 경계에서 컷.
-  String _truncateKeywords(String input, int max) {
-    final compact = input.replaceAll(RegExp(r'\s*,\s*'), ',').trim();
-    if (compact.length <= max) return compact;
-    final tokens = compact.split(',');
-    final buf = StringBuffer();
-    for (final t in tokens) {
-      final extra = buf.isEmpty ? t.length : t.length + 1; // +1 for comma
-      if (buf.length + extra > max) break;
-      if (buf.isNotEmpty) buf.write(',');
-      buf.write(t);
-    }
-    return buf.toString();
+    _keywordsCtrl.text = truncateKeywords(raw, 100);
   }
 
   @override

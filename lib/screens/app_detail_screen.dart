@@ -15,6 +15,7 @@ import '../models/team.dart';
 import '../services/asc_api_client.dart';
 import '../services/docx_parser.dart';
 import '../services/keywords_parser.dart';
+import '../services/keywords_truncate.dart';
 import '../services/team_repository.dart';
 import 'app_detail/app_info_section.dart';
 import 'app_detail/notification_config_section.dart';
@@ -51,12 +52,6 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
   // 키워드 텍스트 파싱 결과 (로케일별 키워드)
   ParsedKeywordsFile? _parsedKeywords;
   String? _keywordsFileName;
-
-  // 섹션 state 외부 접근용 (전체 적용 버튼에서 사용)
-  final GlobalKey<VersionLocalizationSectionState> _versionLocKey =
-      GlobalKey<VersionLocalizationSectionState>();
-  final GlobalKey<AppInfoSectionState> _appInfoKey =
-      GlobalKey<AppInfoSectionState>();
 
   bool _applyingAll = false;
 
@@ -391,45 +386,105 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     });
   }
 
-  /// 현재 선택된 로케일의 모든 변경사항 일괄 PATCH.
-  /// 버전 로컬라이제이션 → 앱 정보 로컬라이제이션 → 카테고리 순.
+  /// 첨부된 파일(.docx + .txt)을 모든 로케일에 일괄 PATCH.
+  ///
+  /// 각 로케일에 대해:
+  /// - VersionLocalization: description / keywords
+  /// - AppInfoLocalization: name / subtitle
+  ///
+  /// 현재 로케일의 카테고리 변경은 별도로 처리 (카테고리는 로케일 비종속).
   Future<void> _applyAll() async {
     setState(() => _applyingAll = true);
-    int success = 0;
+    int patched = 0;
     int skipped = 0;
     final errors = <String>[];
 
-    Future<void> run(String label, Future<bool> Function() task) async {
-      try {
-        final ok = await task();
-        if (ok) {
-          success++;
-        } else {
-          skipped++;
+    final parsedDocx = _parsedDocx;
+    final parsedKeywords = _parsedKeywords;
+
+    // ---- 버전 로컬라이제이션: description + keywords ----
+    for (final loc in _versionLocs) {
+      final parsedSection = parsedDocx?.sections[loc.locale];
+      final parsedKw = parsedKeywords?.keywordsFor(loc.locale);
+      final diff = <String, String>{};
+
+      if (parsedSection?.description != null &&
+          parsedSection!.description!.isNotEmpty &&
+          parsedSection.description != loc.description) {
+        diff['description'] = parsedSection.description!;
+      }
+      if (parsedKw != null) {
+        final truncated = truncateKeywords(parsedKw, 100);
+        if (truncated.isNotEmpty && truncated != loc.keywords) {
+          diff['keywords'] = truncated;
         }
+      }
+
+      if (diff.isEmpty) {
+        skipped++;
+        continue;
+      }
+      try {
+        final updated = await _client.updateLocalizationFields(
+          widget.team,
+          loc.id,
+          diff,
+        );
+        if (!mounted) return;
+        _onVersionLocUpdated(updated);
+        patched++;
       } catch (e) {
-        errors.add('$label: $e');
+        errors.add('${loc.locale} 버전 정보: $e');
       }
     }
 
-    await run('버전 로컬라이제이션',
-        () => _versionLocKey.currentState?.saveIfChanged() ?? Future.value(false));
-    await run(
-        '앱 정보 로컬라이제이션',
-        () =>
-            _appInfoKey.currentState?.saveLocalizationIfChanged() ??
-            Future.value(false));
-    await run(
-        '카테고리',
-        () =>
-            _appInfoKey.currentState?.saveCategoriesIfChanged() ??
-            Future.value(false));
+    // ---- 앱 정보 로컬라이제이션: name + subtitle ----
+    final appInfoEditable = _selectedAppInfo?.isEditable ?? false;
+    if (appInfoEditable) {
+      for (final loc in _appInfoLocs) {
+        final parsedSection = parsedDocx?.sections[loc.locale];
+        if (parsedSection == null) {
+          skipped++;
+          continue;
+        }
+        final diff = <String, String>{};
+        if (parsedSection.name != null &&
+            parsedSection.name!.isNotEmpty &&
+            parsedSection.name != loc.name) {
+          diff['name'] = parsedSection.name!;
+        }
+        if (parsedSection.subtitle != null &&
+            parsedSection.subtitle!.isNotEmpty &&
+            parsedSection.subtitle != loc.subtitle) {
+          diff['subtitle'] = parsedSection.subtitle!;
+        }
+        if (diff.isEmpty) {
+          skipped++;
+          continue;
+        }
+        try {
+          final updated = await _client.updateAppInfoLocalizationFields(
+            widget.team,
+            loc.id,
+            diff,
+          );
+          if (!mounted) return;
+          _onAppInfoLocUpdated(updated);
+          patched++;
+        } catch (e) {
+          errors.add('${loc.locale} 앱 정보: $e');
+        }
+      }
+    } else if (parsedDocx != null && _appInfoLocs.isNotEmpty) {
+      // 수정 불가 상태(LIVE 등)에서는 알려만 주고 카운트는 skip.
+      errors.add('앱 정보(이름/부제)는 현재 ${_selectedAppInfo?.state ?? "수정 불가"} 상태라 건너뜀');
+    }
 
     if (!mounted) return;
     setState(() => _applyingAll = false);
 
     final parts = <String>[];
-    if (success > 0) parts.add('$success건 저장');
+    if (patched > 0) parts.add('$patched건 저장');
     if (skipped > 0) parts.add('$skipped건 변경 없음');
     if (errors.isNotEmpty) parts.add('${errors.length}건 실패');
     ScaffoldMessenger.of(context).showSnackBar(
@@ -438,8 +493,30 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
           parts.isEmpty ? '적용할 변경이 없습니다.' : parts.join(' · '),
         ),
         behavior: SnackBarBehavior.floating,
+        duration: errors.isEmpty
+            ? const Duration(seconds: 4)
+            : const Duration(seconds: 8),
       ),
     );
+
+    // 실패 상세는 별도 dialog로 (스낵바는 길어서 잘림)
+    if (errors.isNotEmpty && mounted) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('일부 적용 실패'),
+          content: SingleChildScrollView(
+            child: Text(errors.join('\n\n')),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('닫기'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   ParsedLocaleSection? get _currentParsedSection {
@@ -536,18 +613,14 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
               child: Center(child: CircularProgressIndicator()),
             )
           else
-            DropdownButtonFormField<String>(
-              initialValue: _selectedLocale,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              ),
-              items: [
-                for (final loc in locales)
-                  DropdownMenuItem(value: loc, child: Text(loc)),
-              ],
-              onChanged: _switchingLocale ? null : _onSelectLocale,
+            _LocaleTabBar(
+              locales: locales,
+              selected: _selectedLocale,
+              disabled: _switchingLocale,
+              parsedDocxLocales: _parsedDocx?.sections.keys.toSet() ?? const {},
+              parsedKeywordsLocales:
+                  _parsedKeywords?.keywordsByLocale.keys.toSet() ?? const {},
+              onTap: _onSelectLocale,
             ),
           if (_error != null) ...[
             const SizedBox(height: 16),
@@ -555,7 +628,6 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
           ],
           const SizedBox(height: 32),
           VersionLocalizationSection(
-            key: _versionLocKey,
             team: widget.team,
             client: _client,
             localization: _selectedVersionLoc,
@@ -566,7 +638,6 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
           ),
           const Divider(height: 64),
           AppInfoSection(
-            key: _appInfoKey,
             team: widget.team,
             client: _client,
             appInfo: _selectedAppInfo,
@@ -818,6 +889,84 @@ class _ParsedSummary extends StatelessWidget {
             ),
         ],
       ],
+    );
+  }
+}
+
+/// 로케일 탭바 — 가로 스크롤 칩.
+/// 각 칩에 파싱된 데이터 유무를 작은 점으로 표시.
+class _LocaleTabBar extends StatelessWidget {
+  const _LocaleTabBar({
+    required this.locales,
+    required this.selected,
+    required this.disabled,
+    required this.parsedDocxLocales,
+    required this.parsedKeywordsLocales,
+    required this.onTap,
+  });
+
+  final List<String> locales;
+  final String? selected;
+  final bool disabled;
+  final Set<String> parsedDocxLocales;
+  final Set<String> parsedKeywordsLocales;
+  final ValueChanged<String?> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: locales.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 6),
+        itemBuilder: (context, i) {
+          final loc = locales[i];
+          final isSelected = loc == selected;
+          final hasDocx = parsedDocxLocales.contains(loc);
+          final hasKw = parsedKeywordsLocales.contains(loc);
+          return ChoiceChip(
+            selected: isSelected,
+            onSelected: disabled ? null : (_) => onTap(loc),
+            label: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(loc),
+                if (hasDocx) ...[
+                  const SizedBox(width: 6),
+                  _ParsedDot(color: scheme.primary, tooltip: '워드 파싱됨'),
+                ],
+                if (hasKw) ...[
+                  const SizedBox(width: 4),
+                  _ParsedDot(color: scheme.tertiary, tooltip: '키워드 파싱됨'),
+                ],
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ParsedDot extends StatelessWidget {
+  const _ParsedDot({required this.color, required this.tooltip});
+  final Color color;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+        ),
+      ),
     );
   }
 }
