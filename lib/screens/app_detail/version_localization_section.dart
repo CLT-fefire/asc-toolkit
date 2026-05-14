@@ -34,6 +34,8 @@ class _VersionLocalizationSectionState
   final TextEditingController _descriptionCtrl = TextEditingController();
   final TextEditingController _keywordsCtrl = TextEditingController();
   final TextEditingController _promotionalCtrl = TextEditingController();
+  final TextEditingController _supportUrlCtrl = TextEditingController();
+  final TextEditingController _marketingUrlCtrl = TextEditingController();
 
   bool _saving = false;
   Object? _error;
@@ -53,7 +55,11 @@ class _VersionLocalizationSectionState
             widget.localization?.description ||
         oldWidget.localization?.keywords != widget.localization?.keywords ||
         oldWidget.localization?.promotionalText !=
-            widget.localization?.promotionalText) {
+            widget.localization?.promotionalText ||
+        oldWidget.localization?.supportUrl !=
+            widget.localization?.supportUrl ||
+        oldWidget.localization?.marketingUrl !=
+            widget.localization?.marketingUrl) {
       _syncControllers();
       _error = null;
     }
@@ -65,6 +71,8 @@ class _VersionLocalizationSectionState
     _descriptionCtrl.dispose();
     _keywordsCtrl.dispose();
     _promotionalCtrl.dispose();
+    _supportUrlCtrl.dispose();
+    _marketingUrlCtrl.dispose();
     super.dispose();
   }
 
@@ -74,6 +82,8 @@ class _VersionLocalizationSectionState
     _descriptionCtrl.text = loc?.description ?? '';
     _keywordsCtrl.text = loc?.keywords ?? '';
     _promotionalCtrl.text = loc?.promotionalText ?? '';
+    _supportUrlCtrl.text = loc?.supportUrl ?? '';
+    _marketingUrlCtrl.text = loc?.marketingUrl ?? '';
   }
 
   Map<String, String> _diff() {
@@ -94,6 +104,12 @@ class _VersionLocalizationSectionState
     }
     if (changed(loc.promotionalText, _promotionalCtrl.text)) {
       result['promotionalText'] = _promotionalCtrl.text;
+    }
+    if (changed(loc.supportUrl, _supportUrlCtrl.text)) {
+      result['supportUrl'] = _supportUrlCtrl.text;
+    }
+    if (changed(loc.marketingUrl, _marketingUrlCtrl.text)) {
+      result['marketingUrl'] = _marketingUrlCtrl.text;
     }
     return result;
   }
@@ -214,6 +230,34 @@ class _VersionLocalizationSectionState
             hintText: '예: 한정 이벤트 진행 중! 지금 다운로드하고 …',
             border: OutlineInputBorder(),
             alignLabelWithHint: true,
+          ),
+        ),
+        const SizedBox(height: 24),
+        const SectionLabel('지원 URL (Support URL)'),
+        const SizedBox(height: 4),
+        _Hint('App Store 상세 페이지의 "앱 지원" 링크. 필수 항목.'),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _supportUrlCtrl,
+          enabled: enabled,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com/support',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 24),
+        const SectionLabel('마케팅 URL (Marketing URL)'),
+        const SizedBox(height: 4),
+        _Hint('App Store 상세 페이지의 "앱 웹사이트" 링크. 선택 항목.'),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _marketingUrlCtrl,
+          enabled: enabled,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com',
+            border: OutlineInputBorder(),
           ),
         ),
         if (_error != null) ...[

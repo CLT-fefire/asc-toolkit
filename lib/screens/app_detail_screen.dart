@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/app_category.dart';
 import '../models/app_info.dart';
 import '../models/app_info_localization.dart';
+import '../models/app_notification_config.dart';
 import '../models/app_store_review_detail.dart';
 import '../models/app_store_version.dart';
 import '../models/app_store_version_localization.dart';
@@ -11,6 +12,7 @@ import '../models/team.dart';
 import '../services/asc_api_client.dart';
 import '../services/team_repository.dart';
 import 'app_detail/app_info_section.dart';
+import 'app_detail/notification_config_section.dart';
 import 'app_detail/review_detail_section.dart';
 import 'app_detail/section_widgets.dart';
 import 'app_detail/version_localization_section.dart';
@@ -54,6 +56,9 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
   // 심사 정보 (선택된 버전 기준)
   AppStoreReviewDetail? _reviewDetail;
 
+  // App Store 서버 알림 V2 (앱 단위 1개)
+  AppNotificationConfig? _notificationConfig;
+
   // 로딩 상태
   bool _loading = false;
   bool _switchingVersion = false;
@@ -83,6 +88,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       _selectedAppInfoLoc = null;
       _categories = const [];
       _reviewDetail = null;
+      _notificationConfig = null;
       _selectedLocale = null;
     });
     try {
@@ -90,12 +96,14 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
         _client.fetchVersions(widget.team, widget.app.id),
         _client.fetchAppInfos(widget.team, widget.app.id),
         _client.fetchCategories(widget.team),
+        _client.fetchAppNotificationConfig(widget.team, widget.app.id),
       ]);
       if (!mounted) return;
 
       final versions = results[0] as List<AppStoreVersion>;
       final appInfos = results[1] as List<AppInfo>;
       final categories = results[2] as List<AppCategory>;
+      final notifConfig = results[3] as AppNotificationConfig;
 
       // editable AppInfo 우선 (PREPARE_FOR_SUBMISSION 등).
       // 없으면 LIVE(READY_FOR_DISTRIBUTION) 같은 read-only AppInfo로 fallback.
@@ -109,6 +117,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
         _selectedVersion = versions.isNotEmpty ? versions.first : null;
         _selectedAppInfo = pickedAppInfo;
         _categories = categories;
+        _notificationConfig = notifConfig;
       });
 
       await Future.wait<void>([
@@ -255,6 +264,10 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     setState(() => _reviewDetail = updated);
   }
 
+  void _onNotificationConfigUpdated(AppNotificationConfig updated) {
+    setState(() => _notificationConfig = updated);
+  }
+
   // ---- Build ----
 
   @override
@@ -365,6 +378,14 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
             client: _client,
             reviewDetail: _reviewDetail,
             onUpdated: _onReviewDetailUpdated,
+          ),
+          const Divider(height: 64),
+          NotificationConfigSection(
+            team: widget.team,
+            client: _client,
+            appId: widget.app.id,
+            config: _notificationConfig,
+            onUpdated: _onNotificationConfigUpdated,
           ),
           const SizedBox(height: 32),
         ],

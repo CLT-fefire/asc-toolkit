@@ -35,9 +35,11 @@ class AppInfoSection extends StatefulWidget {
 }
 
 class _AppInfoSectionState extends State<AppInfoSection> {
-  // 이름/부제
+  // 이름/부제/개인정보처리방침
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _subtitleCtrl = TextEditingController();
+  final TextEditingController _privacyUrlCtrl = TextEditingController();
+  final TextEditingController _privacyTextCtrl = TextEditingController();
   bool _savingLoc = false;
   Object? _locError;
 
@@ -59,7 +61,11 @@ class _AppInfoSectionState extends State<AppInfoSection> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.localization?.id != widget.localization?.id ||
         oldWidget.localization?.name != widget.localization?.name ||
-        oldWidget.localization?.subtitle != widget.localization?.subtitle) {
+        oldWidget.localization?.subtitle != widget.localization?.subtitle ||
+        oldWidget.localization?.privacyPolicyUrl !=
+            widget.localization?.privacyPolicyUrl ||
+        oldWidget.localization?.privacyPolicyText !=
+            widget.localization?.privacyPolicyText) {
       _syncLocControllers();
       _locError = null;
     }
@@ -77,12 +83,16 @@ class _AppInfoSectionState extends State<AppInfoSection> {
   void dispose() {
     _nameCtrl.dispose();
     _subtitleCtrl.dispose();
+    _privacyUrlCtrl.dispose();
+    _privacyTextCtrl.dispose();
     super.dispose();
   }
 
   void _syncLocControllers() {
     _nameCtrl.text = widget.localization?.name ?? '';
     _subtitleCtrl.text = widget.localization?.subtitle ?? '';
+    _privacyUrlCtrl.text = widget.localization?.privacyPolicyUrl ?? '';
+    _privacyTextCtrl.text = widget.localization?.privacyPolicyText ?? '';
   }
 
   void _syncCategoryState() {
@@ -100,6 +110,12 @@ class _AppInfoSectionState extends State<AppInfoSection> {
     if (changed(loc.name, _nameCtrl.text)) result['name'] = _nameCtrl.text;
     if (changed(loc.subtitle, _subtitleCtrl.text)) {
       result['subtitle'] = _subtitleCtrl.text;
+    }
+    if (changed(loc.privacyPolicyUrl, _privacyUrlCtrl.text)) {
+      result['privacyPolicyUrl'] = _privacyUrlCtrl.text;
+    }
+    if (changed(loc.privacyPolicyText, _privacyTextCtrl.text)) {
+      result['privacyPolicyText'] = _privacyTextCtrl.text;
     }
     return result;
   }
@@ -221,6 +237,31 @@ class _AppInfoSectionState extends State<AppInfoSection> {
             border: OutlineInputBorder(),
           ),
         ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _privacyUrlCtrl,
+          enabled: widget.localization != null && !_savingLoc && editable,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            labelText: '개인정보처리방침 URL',
+            hintText: 'https://example.com/privacy',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _privacyTextCtrl,
+          enabled: widget.localization != null && !_savingLoc && editable,
+          maxLines: 6,
+          minLines: 3,
+          maxLength: 1000,
+          decoration: const InputDecoration(
+            labelText: '개인정보처리방침 본문 (선택)',
+            hintText: '카테고리에 따라 URL 대신 또는 함께 본문 텍스트를 요구하는 경우 사용',
+            border: OutlineInputBorder(),
+            alignLabelWithHint: true,
+          ),
+        ),
         if (_locError != null) ...[
           const SizedBox(height: 8),
           SectionErrorCard(error: _locError!),
@@ -231,7 +272,7 @@ class _AppInfoSectionState extends State<AppInfoSection> {
           onPressed: (widget.localization == null || !editable)
               ? null
               : _saveLocalization,
-          label: '이름/부제 저장',
+          label: '이름/부제/개인정보처리방침 저장',
         ),
         const SizedBox(height: 32),
         const SectionLabel('카테고리 (Categories)'),
