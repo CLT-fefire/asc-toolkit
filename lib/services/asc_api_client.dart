@@ -125,11 +125,31 @@ class AscApiClient {
         .toList(growable: false);
   }
 
+  /// 단일 필드 변경용 편의 메서드. 내부적으로 [updateLocalizationFields] 호출.
   Future<AppStoreVersionLocalization> updateWhatsNew(
     Team team,
     String localizationId,
     String whatsNew,
+  ) =>
+      updateLocalizationFields(team, localizationId, {'whatsNew': whatsNew});
+
+  /// 여러 필드를 한 번의 PATCH로 갱신.
+  ///
+  /// [attributes]는 비어 있지 않아야 함 (호출자가 변경 감지 후 호출).
+  ///
+  /// 허용 필드 (ASC `appStoreVersionLocalizations`):
+  /// - whatsNew (max 4000)
+  /// - description (max 4000)
+  /// - keywords (max 100, 콤마 구분)
+  /// - promotionalText (max 170)
+  /// - supportUrl (URL)
+  /// - marketingUrl (URL, optional)
+  Future<AppStoreVersionLocalization> updateLocalizationFields(
+    Team team,
+    String localizationId,
+    Map<String, String?> attributes,
   ) async {
+    assert(attributes.isNotEmpty, 'updateLocalizationFields: 빈 변경 호출 불가');
     final headers = await _authHeader(team);
     final body = await _patchJson(
       '/v1/appStoreVersionLocalizations/$localizationId',
@@ -138,7 +158,7 @@ class AscApiClient {
         'data': {
           'type': 'appStoreVersionLocalizations',
           'id': localizationId,
-          'attributes': {'whatsNew': whatsNew},
+          'attributes': attributes,
         }
       },
     );
