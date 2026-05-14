@@ -1,5 +1,6 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/app_category.dart';
 import '../models/app_info.dart';
@@ -625,6 +626,27 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     return _parsedWhatsNew?.whatsNewFor(locale);
   }
 
+  /// 양쪽 로컬라이제이션의 합집합 + 정렬. 탭바와 단축키가 동일한 순서를 공유.
+  List<String> get _sortedLocales {
+    final set = <String>{
+      for (final v in _versionLocs) v.locale,
+      for (final a in _appInfoLocs) a.locale,
+    };
+    final list = set.toList()..sort();
+    return list;
+  }
+
+  /// Cmd+N 단축키용 — 1-based 인덱스로 [n]번째 로케일 활성화.
+  /// 범위 밖이거나 동일 로케일이면 no-op.
+  void _selectLocaleByIndex(int n) {
+    final list = _sortedLocales;
+    final idx = n - 1;
+    if (idx < 0 || idx >= list.length) return;
+    final loc = list[idx];
+    if (loc == _selectedLocale || _switchingLocale || _switchingVersion) return;
+    _onSelectLocale(loc);
+  }
+
   // ---- Build ----
 
   @override
@@ -642,20 +664,43 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _buildBody(context),
+          : _wrapShortcuts(_buildBody(context)),
     );
   }
+
+  /// Cmd+1 ~ Cmd+9, Cmd+0 (= 10번째) 단축키 매핑.
+  /// macOS 기준 meta = Command 키.
+  Widget _wrapShortcuts(Widget child) {
+    return CallbackShortcuts(
+      bindings: {
+        for (final entry in _digitKeys.entries)
+          SingleActivator(entry.value, meta: true): () =>
+              _selectLocaleByIndex(entry.key),
+      },
+      child: Focus(autofocus: true, child: child),
+    );
+  }
+
+  /// 1-based 인덱스 → 키보드 키. 10번째는 Cmd+0.
+  static const Map<int, LogicalKeyboardKey> _digitKeys = {
+    1: LogicalKeyboardKey.digit1,
+    2: LogicalKeyboardKey.digit2,
+    3: LogicalKeyboardKey.digit3,
+    4: LogicalKeyboardKey.digit4,
+    5: LogicalKeyboardKey.digit5,
+    6: LogicalKeyboardKey.digit6,
+    7: LogicalKeyboardKey.digit7,
+    8: LogicalKeyboardKey.digit8,
+    9: LogicalKeyboardKey.digit9,
+    10: LogicalKeyboardKey.digit0,
+  };
 
   Widget _buildBody(BuildContext context) {
     if (_versions.isEmpty && _error == null) {
       return const Center(child: Text('이 앱의 App Store 버전이 없습니다.'));
     }
 
-    final locales = <String>{
-      for (final v in _versionLocs) v.locale,
-      for (final a in _appInfoLocs) a.locale,
-    }.toList()
-      ..sort();
+    final locales = _sortedLocales;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -1179,12 +1224,31 @@ class _LocaleTabBar extends StatelessWidget {
           final hasDocx = parsedDocxLocales.contains(loc);
           final hasKw = parsedKeywordsLocales.contains(loc);
           final hasWn = parsedWhatsNewLocales.contains(loc);
-          return ChoiceChip(
+          // Cmd+1 ~ Cmd+9 (i=0..8), Cmd+0 (i=9). 10번째 초과는 힌트 생략.
+          final shortcutHint = i < 9
+              ? '⌘${i + 1}'
+              : i == 9
+                  ? '⌘0'
+                  : null;
+          final chip = ChoiceChip(
             selected: isSelected,
             onSelected: disabled ? null : (_) => onTap(loc),
             label: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (shortcutHint != null) ...[
+                  Text(
+                    shortcutHint,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: isSelected
+                              ? scheme.onSecondaryContainer
+                                  .withValues(alpha: 0.7)
+                              : scheme.onSurfaceVariant,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
                 Text(loc),
                 if (hasWn) ...[
                   const SizedBox(width: 6),
@@ -1201,6 +1265,9 @@ class _LocaleTabBar extends StatelessWidget {
               ],
             ),
           );
+          return shortcutHint == null
+              ? chip
+              : Tooltip(message: '$shortcutHint 로 이동', child: chip);
         },
       ),
     );
