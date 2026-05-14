@@ -1,11 +1,19 @@
 import 'package:flutter/material.dart';
 
+import '../models/app_category.dart';
+import '../models/app_info.dart';
+import '../models/app_info_localization.dart';
+import '../models/app_store_review_detail.dart';
 import '../models/app_store_version.dart';
 import '../models/app_store_version_localization.dart';
 import '../models/app_summary.dart';
 import '../models/team.dart';
 import '../services/asc_api_client.dart';
 import '../services/team_repository.dart';
+import 'app_detail/app_info_section.dart';
+import 'app_detail/review_detail_section.dart';
+import 'app_detail/section_widgets.dart';
+import 'app_detail/version_localization_section.dart';
 
 class AppDetailScreen extends StatefulWidget {
   const AppDetailScreen({
@@ -27,108 +35,162 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
   late final AscApiClient _client =
       AscApiClient(repository: widget.repository);
 
-  final TextEditingController _whatsNewCtrl = TextEditingController();
-  final TextEditingController _descriptionCtrl = TextEditingController();
-  final TextEditingController _keywordsCtrl = TextEditingController();
-  final TextEditingController _promotionalCtrl = TextEditingController();
-
+  // 버전
   List<AppStoreVersion> _versions = const [];
   AppStoreVersion? _selectedVersion;
 
-  List<AppStoreVersionLocalization> _localizations = const [];
-  AppStoreVersionLocalization? _selectedLocalization;
+  // 버전 로컬라이제이션
+  List<AppStoreVersionLocalization> _versionLocs = const [];
+  AppStoreVersionLocalization? _selectedVersionLoc;
 
-  bool _loadingVersions = false;
-  bool _loadingLocalizations = false;
-  bool _saving = false;
+  // 앱 정보
+  AppInfo? _selectedAppInfo;
+  List<AppInfoLocalization> _appInfoLocs = const [];
+  AppInfoLocalization? _selectedAppInfoLoc;
+
+  // 카테고리 (앱 전체에 1번만 fetch)
+  List<AppCategory> _categories = const [];
+
+  // 심사 정보 (선택된 버전 기준)
+  AppStoreReviewDetail? _reviewDetail;
+
+  // 로딩 상태
+  bool _loading = false;
+  bool _switchingVersion = false;
+  bool _switchingLocale = false;
   Object? _error;
+
+  String? _selectedLocale;
 
   @override
   void initState() {
     super.initState();
-    _loadVersions();
+    _loadAll();
   }
 
-  @override
-  void dispose() {
-    _whatsNewCtrl.dispose();
-    _descriptionCtrl.dispose();
-    _keywordsCtrl.dispose();
-    _promotionalCtrl.dispose();
-    super.dispose();
-  }
+  // ---- 초기 + 전체 로드 ----
 
-  Future<void> _loadVersions() async {
+  Future<void> _loadAll() async {
     setState(() {
-      _loadingVersions = true;
+      _loading = true;
       _error = null;
       _versions = const [];
       _selectedVersion = null;
-      _localizations = const [];
-      _selectedLocalization = null;
-      _resetControllers(null);
+      _versionLocs = const [];
+      _selectedVersionLoc = null;
+      _selectedAppInfo = null;
+      _appInfoLocs = const [];
+      _selectedAppInfoLoc = null;
+      _categories = const [];
+      _reviewDetail = null;
+      _selectedLocale = null;
     });
     try {
-      final versions = await _client.fetchVersions(widget.team, widget.app.id);
+      final results = await Future.wait<dynamic>([
+        _client.fetchVersions(widget.team, widget.app.id),
+        _client.fetchAppInfos(widget.team, widget.app.id),
+        _client.fetchCategories(widget.team),
+      ]);
       if (!mounted) return;
+
+      final versions = results[0] as List<AppStoreVersion>;
+      final appInfos = results[1] as List<AppInfo>;
+      final categories = results[2] as List<AppCategory>;
+
       setState(() {
         _versions = versions;
         _selectedVersion = versions.isNotEmpty ? versions.first : null;
+        _selectedAppInfo = appInfos.isNotEmpty ? appInfos.first : null;
+        _categories = categories;
       });
-      if (_selectedVersion != null) {
-        await _loadLocalizations(_selectedVersion!);
-      }
+
+      await Future.wait<void>([
+        if (_selectedVersion != null) _loadVersionDeps(_selectedVersion!),
+        if (_selectedAppInfo != null) _loadAppInfoLocs(_selectedAppInfo!),
+      ]);
+      if (mounted) _applyDefaultLocale();
     } catch (e) {
       if (mounted) setState(() => _error = e);
     } finally {
-      if (mounted) setState(() => _loadingVersions = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _loadLocalizations(AppStoreVersion version) async {
+  /// 버전 단위 로드 (localizations + review detail).
+  Future<void> _loadVersionDeps(AppStoreVersion version) async {
+    final results = await Future.wait<dynamic>([
+      _client.fetchLocalizations(widget.team, version.id),
+      _client.fetchReviewDetail(widget.team, version.id),
+    ]);
+    if (!mounted) return;
     setState(() {
-      _loadingLocalizations = true;
-      _error = null;
-      _localizations = const [];
-      _selectedLocalization = null;
-      _resetControllers(null);
+      _versionLocs = results[0] as List<AppStoreVersionLocalization>;
+      _reviewDetail = results[1] as AppStoreReviewDetail?;
+    });
+  }
+
+  Future<void> _loadAppInfoLocs(AppInfo info) async {
+    final locs = await _client.fetchAppInfoLocalizations(widget.team, info.id);
+    if (!mounted) return;
+    setState(() => _appInfoLocs = locs);
+  }
+
+  /// 앱의 primaryLocale 기준으로 양쪽 로케일을 초기 선택.
+  void _applyDefaultLocale() {
+    final primary = widget.app.primaryLocale;
+    final candidates = <String>{
+      for (final v in _versionLocs) v.locale,
+      for (final a in _appInfoLocs) a.locale,
+    };
+    if (candidates.isEmpty) return;
+    final pick = candidates.contains(primary) ? primary : candidates.first;
+    _selectLocale(pick);
+  }
+
+  void _selectLocale(String locale) {
+    setState(() {
+      _selectedLocale = locale;
+      _selectedVersionLoc = _versionLocs
+          .where((l) => l.locale == locale)
+          .cast<AppStoreVersionLocalization?>()
+          .firstWhere((_) => true, orElse: () => null);
+      _selectedAppInfoLoc = _appInfoLocs
+          .where((l) => l.locale == locale)
+          .cast<AppInfoLocalization?>()
+          .firstWhere((_) => true, orElse: () => null);
+    });
+  }
+
+  // ---- 셀렉터 이벤트 ----
+
+  Future<void> _onSelectVersion(AppStoreVersion? v) async {
+    if (v == null || v.id == _selectedVersion?.id) return;
+    setState(() {
+      _selectedVersion = v;
+      _switchingVersion = true;
+      _versionLocs = const [];
+      _selectedVersionLoc = null;
+      _reviewDetail = null;
     });
     try {
-      final locs = await _client.fetchLocalizations(widget.team, version.id);
-      if (!mounted) return;
-      final primary = _pickPrimaryLocalization(locs);
-      setState(() {
-        _localizations = locs;
-        _selectedLocalization = primary;
-        _resetControllers(primary);
-      });
+      await _loadVersionDeps(v);
+      if (mounted && _selectedLocale != null) _selectLocale(_selectedLocale!);
     } catch (e) {
       if (mounted) setState(() => _error = e);
     } finally {
-      if (mounted) setState(() => _loadingLocalizations = false);
+      if (mounted) setState(() => _switchingVersion = false);
     }
   }
 
-  AppStoreVersionLocalization? _pickPrimaryLocalization(
-    List<AppStoreVersionLocalization> locs,
-  ) {
-    if (locs.isEmpty) return null;
-    final primary = widget.app.primaryLocale;
-    for (final loc in locs) {
-      if (loc.locale == primary) return loc;
-    }
-    return locs.first;
+  void _onSelectLocale(String? locale) {
+    if (locale == null || locale == _selectedLocale) return;
+    setState(() => _switchingLocale = true);
+    _selectLocale(locale);
+    setState(() => _switchingLocale = false);
   }
 
-  void _resetControllers(AppStoreVersionLocalization? loc) {
-    _whatsNewCtrl.text = loc?.whatsNew ?? '';
-    _descriptionCtrl.text = loc?.description ?? '';
-    _keywordsCtrl.text = loc?.keywords ?? '';
-    _promotionalCtrl.text = loc?.promotionalText ?? '';
-  }
+  // ---- 첫 출시 판단 ----
 
-  /// 같은 앱의 versions 중 한 번이라도 게시 이력이 있는 상태가 있으면 false.
-  /// Apple 정책상 첫 출시 버전에서는 'What's New' 입력 불가.
   bool get _isFirstSubmission {
     if (_versions.isEmpty) return false;
     const everPublished = {
@@ -143,101 +205,44 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     return !_versions.any((v) => everPublished.contains(v.appStoreState));
   }
 
-  /// controller 값과 _selectedLocalization의 현재 값을 비교해서
-  /// 실제로 바뀐 필드만 PATCH attributes 맵으로 반환.
-  Map<String, String> _diffPayload() {
-    final loc = _selectedLocalization;
-    if (loc == null) return const {};
-    final result = <String, String>{};
+  // ---- 섹션 업데이트 콜백 ----
 
-    bool changed(String? before, String after) => (before ?? '') != after;
-
-    if (!_isFirstSubmission && changed(loc.whatsNew, _whatsNewCtrl.text)) {
-      result['whatsNew'] = _whatsNewCtrl.text;
-    }
-    if (changed(loc.description, _descriptionCtrl.text)) {
-      result['description'] = _descriptionCtrl.text;
-    }
-    if (changed(loc.keywords, _keywordsCtrl.text)) {
-      result['keywords'] = _keywordsCtrl.text;
-    }
-    if (changed(loc.promotionalText, _promotionalCtrl.text)) {
-      result['promotionalText'] = _promotionalCtrl.text;
-    }
-    return result;
-  }
-
-  void _onSelectVersion(AppStoreVersion? v) {
-    if (v == null || v.id == _selectedVersion?.id) return;
-    setState(() => _selectedVersion = v);
-    _loadLocalizations(v);
-  }
-
-  void _onSelectLocalization(AppStoreVersionLocalization? loc) {
-    if (loc == null || loc.id == _selectedLocalization?.id) return;
+  void _onVersionLocUpdated(AppStoreVersionLocalization updated) {
     setState(() {
-      _selectedLocalization = loc;
-      _resetControllers(loc);
+      _versionLocs = _versionLocs
+          .map((l) => l.id == updated.id ? updated : l)
+          .toList(growable: false);
+      if (_selectedVersionLoc?.id == updated.id) {
+        _selectedVersionLoc = updated;
+      }
     });
   }
 
-  Future<void> _save() async {
-    final loc = _selectedLocalization;
-    if (loc == null) return;
-    final diff = _diffPayload();
-    if (diff.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('변경된 내용이 없습니다.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-
-    // ASC 422 사전 차단: What's New는 최소 4자
-    if (diff.containsKey('whatsNew') && (diff['whatsNew']?.length ?? 0) < 4) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("ASC 정책상 'What's New'는 최소 4자 이상 입력해야 합니다."),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-
+  void _onAppInfoLocUpdated(AppInfoLocalization updated) {
     setState(() {
-      _saving = true;
-      _error = null;
+      _appInfoLocs = _appInfoLocs
+          .map((l) => l.id == updated.id ? updated : l)
+          .toList(growable: false);
+      if (_selectedAppInfoLoc?.id == updated.id) {
+        _selectedAppInfoLoc = updated;
+      }
     });
-    try {
-      final updated = await _client.updateLocalizationFields(
-        widget.team,
-        loc.id,
-        diff,
-      );
-      if (!mounted) return;
-      setState(() {
-        _selectedLocalization = updated;
-        _localizations = _localizations
-            .map((l) => l.id == updated.id ? updated : l)
-            .toList(growable: false);
-        _resetControllers(updated);
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            "'${loc.locale}' 저장 완료 — ${diff.keys.join(", ")}",
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } catch (e) {
-      if (mounted) setState(() => _error = e);
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
   }
+
+  Future<void> _onCategoriesUpdated() async {
+    // 카테고리 PATCH는 응답에 attributes만 와서 relationships id가 안 옴 → AppInfo 재조회
+    final infos = await _client.fetchAppInfos(widget.team, widget.app.id);
+    if (!mounted) return;
+    setState(() {
+      _selectedAppInfo = infos.isNotEmpty ? infos.first : _selectedAppInfo;
+    });
+  }
+
+  void _onReviewDetailUpdated(AppStoreReviewDetail updated) {
+    setState(() => _reviewDetail = updated);
+  }
+
+  // ---- Build ----
 
   @override
   Widget build(BuildContext context) {
@@ -247,12 +252,12 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
         actions: [
           IconButton(
             tooltip: '새로고침',
-            onPressed: _loadingVersions ? null : _loadVersions,
+            onPressed: _loading ? null : _loadAll,
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
-      body: _loadingVersions
+      body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _buildBody(context),
     );
@@ -263,6 +268,12 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       return const Center(child: Text('이 앱의 App Store 버전이 없습니다.'));
     }
 
+    final locales = <String>{
+      for (final v in _versionLocs) v.locale,
+      for (final a in _appInfoLocs) a.locale,
+    }.toList()
+      ..sort();
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -270,7 +281,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
         children: [
           _AppMetaCard(app: widget.app),
           const SizedBox(height: 24),
-          _SectionLabel('버전'),
+          const SectionLabel('버전'),
           const SizedBox(height: 8),
           DropdownButtonFormField<AppStoreVersion>(
             initialValue: _selectedVersion,
@@ -289,149 +300,62 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
                   ),
                 ),
             ],
-            onChanged: _onSelectVersion,
+            onChanged: _switchingVersion ? null : _onSelectVersion,
           ),
           const SizedBox(height: 24),
-          _SectionLabel('로케일'),
+          const SectionLabel('로케일'),
           const SizedBox(height: 8),
-          if (_loadingLocalizations)
+          if (_switchingVersion)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
               child: Center(child: CircularProgressIndicator()),
             )
           else
-            DropdownButtonFormField<AppStoreVersionLocalization>(
-              initialValue: _selectedLocalization,
+            DropdownButtonFormField<String>(
+              initialValue: _selectedLocale,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 contentPadding:
                     EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               ),
               items: [
-                for (final loc in _localizations)
-                  DropdownMenuItem(value: loc, child: Text(loc.locale)),
+                for (final loc in locales)
+                  DropdownMenuItem(value: loc, child: Text(loc)),
               ],
-              onChanged: _onSelectLocalization,
+              onChanged: _switchingLocale ? null : _onSelectLocale,
             ),
-          const SizedBox(height: 24),
-          _SectionLabel("이 버전의 새로운 기능 (What's New)"),
-          const SizedBox(height: 8),
-          if (_isFirstSubmission) ...[
-            const _FirstSubmissionNotice(),
-            const SizedBox(height: 8),
-          ],
-          TextField(
-            controller: _whatsNewCtrl,
-            enabled: _selectedLocalization != null &&
-                !_saving &&
-                !_isFirstSubmission,
-            maxLines: 8,
-            minLines: 4,
-            maxLength: 4000,
-            decoration: InputDecoration(
-              hintText: _isFirstSubmission
-                  ? '첫 출시 버전이라 입력이 비활성화되어 있습니다.'
-                  : '예: 버그 수정 및 성능 개선.\n   - 새 기능 …\n   - 알려진 이슈 …',
-              helperText: 'ASC 정책: 최소 4자 이상 입력 필요',
-              border: const OutlineInputBorder(),
-              alignLabelWithHint: true,
-            ),
-          ),
-          const SizedBox(height: 24),
-          _SectionLabel('설명 (Description)'),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _descriptionCtrl,
-            enabled: _selectedLocalization != null && !_saving,
-            maxLines: 12,
-            minLines: 6,
-            maxLength: 4000,
-            decoration: const InputDecoration(
-              hintText: '앱 설명. App Store 상세 페이지에 표시되는 본문.',
-              border: OutlineInputBorder(),
-              alignLabelWithHint: true,
-            ),
-          ),
-          const SizedBox(height: 24),
-          _SectionLabel('키워드 (Keywords)'),
-          const SizedBox(height: 4),
-          Text(
-            '콤마(,)로 구분. 100자 제한.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _keywordsCtrl,
-            enabled: _selectedLocalization != null && !_saving,
-            maxLines: 2,
-            minLines: 1,
-            maxLength: 100,
-            decoration: const InputDecoration(
-              hintText: '예: 게임,RPG,어드벤처,캐주얼',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 24),
-          _SectionLabel('프로모션 텍스트 (Promotional Text)'),
-          const SizedBox(height: 4),
-          Text(
-            '170자 제한. 앱 업데이트 없이 수시 변경 가능.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _promotionalCtrl,
-            enabled: _selectedLocalization != null && !_saving,
-            maxLines: 4,
-            minLines: 2,
-            maxLength: 170,
-            decoration: const InputDecoration(
-              hintText: '예: 한정 이벤트 진행 중! 지금 다운로드하고 …',
-              border: OutlineInputBorder(),
-              alignLabelWithHint: true,
-            ),
-          ),
           if (_error != null) ...[
             const SizedBox(height: 16),
-            _ErrorCard(error: _error!),
+            SectionErrorCard(error: _error!),
           ],
-          const SizedBox(height: 24),
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton.icon(
-              onPressed:
-                  (_selectedLocalization == null || _saving) ? null : _save,
-              icon: _saving
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save_outlined),
-              label: Text(_saving ? '저장 중…' : '변경 사항 저장'),
-            ),
+          const SizedBox(height: 32),
+          VersionLocalizationSection(
+            team: widget.team,
+            client: _client,
+            localization: _selectedVersionLoc,
+            isFirstSubmission: _isFirstSubmission,
+            onUpdated: _onVersionLocUpdated,
           ),
+          const Divider(height: 64),
+          AppInfoSection(
+            team: widget.team,
+            client: _client,
+            appInfo: _selectedAppInfo,
+            localization: _selectedAppInfoLoc,
+            categories: _categories,
+            onLocalizationUpdated: _onAppInfoLocUpdated,
+            onCategoriesUpdated: _onCategoriesUpdated,
+          ),
+          const Divider(height: 64),
+          ReviewDetailSection(
+            team: widget.team,
+            client: _client,
+            reviewDetail: _reviewDetail,
+            onUpdated: _onReviewDetailUpdated,
+          ),
+          const SizedBox(height: 32),
         ],
       ),
-    );
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
     );
   }
 }
@@ -470,59 +394,6 @@ class _AppMetaCard extends StatelessWidget {
                 ?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _FirstSubmissionNotice extends StatelessWidget {
-  const _FirstSubmissionNotice();
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: scheme.tertiaryContainer,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: scheme.tertiary.withValues(alpha: 0.4)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.info_outline, color: scheme.onTertiaryContainer),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              "첫 출시 버전입니다. Apple 정책상 'What's New'(이 버전의 새로운 기능)는 "
-              "두 번째 버전부터 입력 가능합니다. 이 앱은 아직 한 번도 게시된 적이 없어 "
-              "입력이 비활성화되어 있습니다.",
-              style: TextStyle(color: scheme.onTertiaryContainer),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.error});
-  final Object error;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: scheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: SelectableText(
-        error.toString(),
-        style: TextStyle(color: scheme.onErrorContainer),
       ),
     );
   }
