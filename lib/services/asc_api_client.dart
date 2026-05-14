@@ -1,5 +1,9 @@
 import 'package:dio/dio.dart';
 
+import '../models/app_category.dart';
+import '../models/app_info.dart';
+import '../models/app_info_localization.dart';
+import '../models/app_store_review_detail.dart';
 import '../models/app_store_version.dart';
 import '../models/app_store_version_localization.dart';
 import '../models/app_summary.dart';
@@ -164,6 +168,184 @@ class AscApiClient {
     );
     final data = body['data'] as Map<String, dynamic>;
     return AppStoreVersionLocalization.fromAscJson(data);
+  }
+
+  // ---- App Info (B.2 이름/부제 + B.3 카테고리) ----
+
+  Future<List<AppInfo>> fetchAppInfos(Team team, String appId) async {
+    final headers = await _authHeader(team);
+    final body = await _getJson(
+      '/v1/apps/$appId/appInfos',
+      query: const {
+        'limit': 50,
+        'include': 'primaryCategory,secondaryCategory',
+        // state(신)와 appStoreState(구) 둘 다 요청 — 모델에서 fallback 처리
+        'fields[appInfos]':
+            'state,appStoreState,primaryCategory,secondaryCategory',
+      },
+      headers: headers,
+    );
+    return (body['data'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map(AppInfo.fromAscJson)
+        .toList(growable: false);
+  }
+
+  Future<List<AppInfoLocalization>> fetchAppInfoLocalizations(
+    Team team,
+    String appInfoId,
+  ) async {
+    final headers = await _authHeader(team);
+    final body = await _getJson(
+      '/v1/appInfos/$appInfoId/appInfoLocalizations',
+      query: const {
+        'limit': 50,
+        'fields[appInfoLocalizations]':
+            'locale,name,subtitle,privacyPolicyUrl,privacyPolicyText',
+      },
+      headers: headers,
+    );
+    return (body['data'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map(AppInfoLocalization.fromAscJson)
+        .toList(growable: false);
+  }
+
+  /// 이름·부제 등 로케일별 필드 PATCH.
+  ///
+  /// 허용 필드 (ASC `appInfoLocalizations`):
+  /// - name (max 30)
+  /// - subtitle (max 30)
+  /// - privacyPolicyUrl (URL)
+  /// - privacyPolicyText (max 1000)
+  Future<AppInfoLocalization> updateAppInfoLocalizationFields(
+    Team team,
+    String localizationId,
+    Map<String, String?> attributes,
+  ) async {
+    assert(attributes.isNotEmpty,
+        'updateAppInfoLocalizationFields: 빈 변경 호출 불가');
+    final headers = await _authHeader(team);
+    final body = await _patchJson(
+      '/v1/appInfoLocalizations/$localizationId',
+      headers: headers,
+      payload: {
+        'data': {
+          'type': 'appInfoLocalizations',
+          'id': localizationId,
+          'attributes': attributes,
+        }
+      },
+    );
+    return AppInfoLocalization.fromAscJson(
+      body['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// iOS 플랫폼의 모든 카테고리. 트리 구성용으로 사용 (parent ↔ children).
+  Future<List<AppCategory>> fetchCategories(
+    Team team, {
+    String platform = 'IOS',
+  }) async {
+    final headers = await _authHeader(team);
+    final body = await _getJson(
+      '/v1/appCategories',
+      query: {
+        'filter[platforms]': platform,
+        'limit': 200,
+        'include': 'parent',
+        'fields[appCategories]': 'platforms,parent',
+      },
+      headers: headers,
+    );
+    return (body['data'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map(AppCategory.fromAscJson)
+        .toList(growable: false);
+  }
+
+  /// 카테고리 변경. relationships PATCH (attributes 없음).
+  /// [primaryCategoryId]는 필수. [secondaryCategoryId]는 null 가능 (제거).
+  Future<void> updateAppInfoCategories(
+    Team team,
+    String appInfoId, {
+    required String primaryCategoryId,
+    String? secondaryCategoryId,
+  }) async {
+    final headers = await _authHeader(team);
+    final relationships = <String, dynamic>{
+      'primaryCategory': {
+        'data': {'type': 'appCategories', 'id': primaryCategoryId},
+      },
+      'secondaryCategory': {
+        'data': secondaryCategoryId == null
+            ? null
+            : {'type': 'appCategories', 'id': secondaryCategoryId},
+      },
+    };
+    await _patchJson(
+      '/v1/appInfos/$appInfoId',
+      headers: headers,
+      payload: {
+        'data': {
+          'type': 'appInfos',
+          'id': appInfoId,
+          'relationships': relationships,
+        }
+      },
+    );
+  }
+
+  // ---- App Store Review Detail (B.4) ----
+
+  /// 버전별 심사 정보 1개. 없을 수 있음 (null).
+  Future<AppStoreReviewDetail?> fetchReviewDetail(
+    Team team,
+    String versionId,
+  ) async {
+    final headers = await _authHeader(team);
+    try {
+      final body = await _getJson(
+        '/v1/appStoreVersions/$versionId/appStoreReviewDetail',
+        query: const {
+          'fields[appStoreReviewDetails]':
+              'contactFirstName,contactLastName,contactPhone,contactEmail,'
+              'demoAccountName,demoAccountPassword,demoAccountRequired,notes',
+        },
+        headers: headers,
+      );
+      final data = body['data'] as Map<String, dynamic>?;
+      if (data == null) return null;
+      return AppStoreReviewDetail.fromAscJson(data);
+    } on AscApiException catch (e) {
+      // 심사 정보가 아직 생성되지 않은 경우 ASC가 404로 응답할 수 있음
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// 심사 정보 PATCH. 일부 필드는 bool([demoAccountRequired])이라 dynamic 타입.
+  Future<AppStoreReviewDetail> updateReviewDetailFields(
+    Team team,
+    String reviewDetailId,
+    Map<String, dynamic> attributes,
+  ) async {
+    assert(attributes.isNotEmpty, 'updateReviewDetailFields: 빈 변경 호출 불가');
+    final headers = await _authHeader(team);
+    final body = await _patchJson(
+      '/v1/appStoreReviewDetails/$reviewDetailId',
+      headers: headers,
+      payload: {
+        'data': {
+          'type': 'appStoreReviewDetails',
+          'id': reviewDetailId,
+          'attributes': attributes,
+        }
+      },
+    );
+    return AppStoreReviewDetail.fromAscJson(
+      body['data'] as Map<String, dynamic>,
+    );
   }
 
   // ---- 내부 헬퍼 ----
