@@ -26,7 +26,11 @@ class AppDetailScreen extends StatefulWidget {
 class _AppDetailScreenState extends State<AppDetailScreen> {
   late final AscApiClient _client =
       AscApiClient(repository: widget.repository);
+
   final TextEditingController _whatsNewCtrl = TextEditingController();
+  final TextEditingController _descriptionCtrl = TextEditingController();
+  final TextEditingController _keywordsCtrl = TextEditingController();
+  final TextEditingController _promotionalCtrl = TextEditingController();
 
   List<AppStoreVersion> _versions = const [];
   AppStoreVersion? _selectedVersion;
@@ -48,6 +52,9 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
   @override
   void dispose() {
     _whatsNewCtrl.dispose();
+    _descriptionCtrl.dispose();
+    _keywordsCtrl.dispose();
+    _promotionalCtrl.dispose();
     super.dispose();
   }
 
@@ -59,7 +66,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       _selectedVersion = null;
       _localizations = const [];
       _selectedLocalization = null;
-      _whatsNewCtrl.text = '';
+      _resetControllers(null);
     });
     try {
       final versions = await _client.fetchVersions(widget.team, widget.app.id);
@@ -84,7 +91,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       _error = null;
       _localizations = const [];
       _selectedLocalization = null;
-      _whatsNewCtrl.text = '';
+      _resetControllers(null);
     });
     try {
       final locs = await _client.fetchLocalizations(widget.team, version.id);
@@ -93,7 +100,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       setState(() {
         _localizations = locs;
         _selectedLocalization = primary;
-        _whatsNewCtrl.text = primary?.whatsNew ?? '';
+        _resetControllers(primary);
       });
     } catch (e) {
       if (mounted) setState(() => _error = e);
@@ -113,10 +120,17 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     return locs.first;
   }
 
-  /// 이 앱이 한 번도 App Store에 출시(승인·게시)된 적이 없으면 true.
-  /// 첫 출시 버전에서는 ASC가 'What's New' 입력을 허용하지 않으므로 미리 잠금.
+  void _resetControllers(AppStoreVersionLocalization? loc) {
+    _whatsNewCtrl.text = loc?.whatsNew ?? '';
+    _descriptionCtrl.text = loc?.description ?? '';
+    _keywordsCtrl.text = loc?.keywords ?? '';
+    _promotionalCtrl.text = loc?.promotionalText ?? '';
+  }
+
+  /// 같은 앱의 versions 중 한 번이라도 게시 이력이 있는 상태가 있으면 false.
+  /// Apple 정책상 첫 출시 버전에서는 'What's New' 입력 불가.
   bool get _isFirstSubmission {
-    if (_versions.isEmpty) return false; // 판단 불가 — 정상 흐름으로 둠
+    if (_versions.isEmpty) return false;
     const everPublished = {
       'READY_FOR_SALE',
       'READY_FOR_DISTRIBUTION',
@@ -129,6 +143,30 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     return !_versions.any((v) => everPublished.contains(v.appStoreState));
   }
 
+  /// controller 값과 _selectedLocalization의 현재 값을 비교해서
+  /// 실제로 바뀐 필드만 PATCH attributes 맵으로 반환.
+  Map<String, String> _diffPayload() {
+    final loc = _selectedLocalization;
+    if (loc == null) return const {};
+    final result = <String, String>{};
+
+    bool changed(String? before, String after) => (before ?? '') != after;
+
+    if (!_isFirstSubmission && changed(loc.whatsNew, _whatsNewCtrl.text)) {
+      result['whatsNew'] = _whatsNewCtrl.text;
+    }
+    if (changed(loc.description, _descriptionCtrl.text)) {
+      result['description'] = _descriptionCtrl.text;
+    }
+    if (changed(loc.keywords, _keywordsCtrl.text)) {
+      result['keywords'] = _keywordsCtrl.text;
+    }
+    if (changed(loc.promotionalText, _promotionalCtrl.text)) {
+      result['promotionalText'] = _promotionalCtrl.text;
+    }
+    return result;
+  }
+
   void _onSelectVersion(AppStoreVersion? v) {
     if (v == null || v.id == _selectedVersion?.id) return;
     setState(() => _selectedVersion = v);
@@ -139,22 +177,44 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     if (loc == null || loc.id == _selectedLocalization?.id) return;
     setState(() {
       _selectedLocalization = loc;
-      _whatsNewCtrl.text = loc.whatsNew ?? '';
+      _resetControllers(loc);
     });
   }
 
   Future<void> _save() async {
     final loc = _selectedLocalization;
     if (loc == null) return;
+    final diff = _diffPayload();
+    if (diff.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('변경된 내용이 없습니다.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // ASC 422 사전 차단: What's New는 최소 4자
+    if (diff.containsKey('whatsNew') && (diff['whatsNew']?.length ?? 0) < 4) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("ASC 정책상 'What's New'는 최소 4자 이상 입력해야 합니다."),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _saving = true;
       _error = null;
     });
     try {
-      final updated = await _client.updateWhatsNew(
+      final updated = await _client.updateLocalizationFields(
         widget.team,
         loc.id,
-        _whatsNewCtrl.text,
+        diff,
       );
       if (!mounted) return;
       setState(() {
@@ -162,11 +222,13 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
         _localizations = _localizations
             .map((l) => l.id == updated.id ? updated : l)
             .toList(growable: false);
-        _whatsNewCtrl.text = updated.whatsNew ?? '';
+        _resetControllers(updated);
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("'${loc.locale}' 로케일의 'What's New' 저장 완료"),
+          content: Text(
+            "'${loc.locale}' 저장 완료 — ${diff.keys.join(", ")}",
+          ),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -263,30 +325,86 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
             enabled: _selectedLocalization != null &&
                 !_saving &&
                 !_isFirstSubmission,
-            maxLines: 10,
-            minLines: 6,
+            maxLines: 8,
+            minLines: 4,
             maxLength: 4000,
             decoration: InputDecoration(
               hintText: _isFirstSubmission
                   ? '첫 출시 버전이라 입력이 비활성화되어 있습니다.'
                   : '예: 버그 수정 및 성능 개선.\n   - 새 기능 …\n   - 알려진 이슈 …',
+              helperText: 'ASC 정책: 최소 4자 이상 입력 필요',
               border: const OutlineInputBorder(),
               alignLabelWithHint: true,
             ),
           ),
+          const SizedBox(height: 24),
+          _SectionLabel('설명 (Description)'),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _descriptionCtrl,
+            enabled: _selectedLocalization != null && !_saving,
+            maxLines: 12,
+            minLines: 6,
+            maxLength: 4000,
+            decoration: const InputDecoration(
+              hintText: '앱 설명. App Store 상세 페이지에 표시되는 본문.',
+              border: OutlineInputBorder(),
+              alignLabelWithHint: true,
+            ),
+          ),
+          const SizedBox(height: 24),
+          _SectionLabel('키워드 (Keywords)'),
+          const SizedBox(height: 4),
+          Text(
+            '콤마(,)로 구분. 100자 제한.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _keywordsCtrl,
+            enabled: _selectedLocalization != null && !_saving,
+            maxLines: 2,
+            minLines: 1,
+            maxLength: 100,
+            decoration: const InputDecoration(
+              hintText: '예: 게임,RPG,어드벤처,캐주얼',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 24),
+          _SectionLabel('프로모션 텍스트 (Promotional Text)'),
+          const SizedBox(height: 4),
+          Text(
+            '170자 제한. 앱 업데이트 없이 수시 변경 가능.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _promotionalCtrl,
+            enabled: _selectedLocalization != null && !_saving,
+            maxLines: 4,
+            minLines: 2,
+            maxLength: 170,
+            decoration: const InputDecoration(
+              hintText: '예: 한정 이벤트 진행 중! 지금 다운로드하고 …',
+              border: OutlineInputBorder(),
+              alignLabelWithHint: true,
+            ),
+          ),
           if (_error != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 16),
             _ErrorCard(error: _error!),
           ],
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
           Align(
             alignment: Alignment.centerRight,
             child: FilledButton.icon(
-              onPressed: (_selectedLocalization == null ||
-                      _saving ||
-                      _isFirstSubmission)
-                  ? null
-                  : _save,
+              onPressed:
+                  (_selectedLocalization == null || _saving) ? null : _save,
               icon: _saving
                   ? const SizedBox(
                       width: 16,
@@ -294,7 +412,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.save_outlined),
-              label: Text(_saving ? '저장 중…' : '저장'),
+              label: Text(_saving ? '저장 중…' : '변경 사항 저장'),
             ),
           ),
         ],
