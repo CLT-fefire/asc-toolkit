@@ -4,6 +4,7 @@ import '../../data/app_category_display_names.dart';
 import '../../models/app_category.dart';
 import '../../models/app_info.dart';
 import '../../models/app_info_localization.dart';
+import '../../models/parsed_docx.dart';
 import '../../models/team.dart';
 import '../../services/asc_api_client.dart';
 import 'section_widgets.dart';
@@ -20,6 +21,7 @@ class AppInfoSection extends StatefulWidget {
     required this.categories,
     required this.onLocalizationUpdated,
     required this.onCategoriesUpdated,
+    this.parsedSection,
   });
 
   final Team team;
@@ -30,11 +32,15 @@ class AppInfoSection extends StatefulWidget {
   final ValueChanged<AppInfoLocalization> onLocalizationUpdated;
   final VoidCallback onCategoriesUpdated;
 
+  /// 워드 파일에서 파싱한 현재 로케일의 데이터. null이면 자동 적용 없음.
+  /// name / subtitle만 자동 적용 (description은 VersionLocalization 쪽).
+  final ParsedLocaleSection? parsedSection;
+
   @override
-  State<AppInfoSection> createState() => _AppInfoSectionState();
+  State<AppInfoSection> createState() => AppInfoSectionState();
 }
 
-class _AppInfoSectionState extends State<AppInfoSection> {
+class AppInfoSectionState extends State<AppInfoSection> {
   // 이름/부제/개인정보처리방침
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _subtitleCtrl = TextEditingController();
@@ -49,6 +55,8 @@ class _AppInfoSectionState extends State<AppInfoSection> {
   bool _savingCats = false;
   Object? _catsError;
 
+  bool _expanded = true;
+
   @override
   void initState() {
     super.initState();
@@ -59,13 +67,15 @@ class _AppInfoSectionState extends State<AppInfoSection> {
   @override
   void didUpdateWidget(covariant AppInfoSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.localization?.id != widget.localization?.id ||
+    final locChanged = oldWidget.localization?.id != widget.localization?.id ||
         oldWidget.localization?.name != widget.localization?.name ||
         oldWidget.localization?.subtitle != widget.localization?.subtitle ||
         oldWidget.localization?.privacyPolicyUrl !=
             widget.localization?.privacyPolicyUrl ||
         oldWidget.localization?.privacyPolicyText !=
-            widget.localization?.privacyPolicyText) {
+            widget.localization?.privacyPolicyText;
+
+    if (locChanged) {
       _syncLocControllers();
       _locError = null;
     }
@@ -76,6 +86,29 @@ class _AppInfoSectionState extends State<AppInfoSection> {
             widget.appInfo?.secondaryCategoryId) {
       _syncCategoryState();
       _catsError = null;
+    }
+
+    // 워드 파일 자동 적용
+    final parsedChanged =
+        oldWidget.parsedSection?.locale != widget.parsedSection?.locale ||
+            oldWidget.parsedSection?.name != widget.parsedSection?.name ||
+            oldWidget.parsedSection?.subtitle != widget.parsedSection?.subtitle;
+    if (locChanged || parsedChanged) {
+      _applyParsedSection();
+    }
+  }
+
+  void _applyParsedSection() {
+    final parsed = widget.parsedSection;
+    if (parsed == null) return;
+    if (parsed.name != null && parsed.name!.isNotEmpty) {
+      // 30자 제한
+      final n = parsed.name!;
+      _nameCtrl.text = n.length <= 30 ? n : n.substring(0, 30);
+    }
+    if (parsed.subtitle != null && parsed.subtitle!.isNotEmpty) {
+      final s = parsed.subtitle!;
+      _subtitleCtrl.text = s.length <= 30 ? s : s.substring(0, 30);
     }
   }
 
@@ -121,12 +154,22 @@ class _AppInfoSectionState extends State<AppInfoSection> {
   }
 
   Future<void> _saveLocalization() async {
+    await saveLocalizationIfChanged(showToastOnNoChange: true);
+  }
+
+  /// 외부 트리거용. 변경 있으면 PATCH, 없으면 무동작.
+  /// 반환: 실제 저장 성공 시 true.
+  Future<bool> saveLocalizationIfChanged(
+      {bool showToastOnNoChange = false}) async {
     final loc = widget.localization;
-    if (loc == null) return;
+    if (loc == null) return false;
+    if (!(widget.appInfo?.isEditable ?? false)) {
+      return false; // read-only AppInfo는 trigger 무시
+    }
     final diff = _locDiff();
     if (diff.isEmpty) {
-      _toast('변경된 내용이 없습니다.');
-      return;
+      if (showToastOnNoChange) _toast('변경된 내용이 없습니다.');
+      return false;
     }
     setState(() {
       _savingLoc = true;
@@ -138,15 +181,19 @@ class _AppInfoSectionState extends State<AppInfoSection> {
         loc.id,
         diff,
       );
-      if (!mounted) return;
+      if (!mounted) return false;
       widget.onLocalizationUpdated(updated);
       _toast("'${loc.locale}' 앱 정보 저장 완료 — ${diff.keys.join(', ')}");
+      return true;
     } catch (e) {
       if (mounted) setState(() => _locError = e);
+      return false;
     } finally {
       if (mounted) setState(() => _savingLoc = false);
     }
   }
+
+  bool get hasLocChanges => _locDiff().isNotEmpty;
 
   // ---- 카테고리 저장 ----
 
@@ -155,15 +202,21 @@ class _AppInfoSectionState extends State<AppInfoSection> {
       _selectedSecondary != widget.appInfo?.secondaryCategoryId;
 
   Future<void> _saveCategories() async {
+    await saveCategoriesIfChanged(showToastOnNoChange: true);
+  }
+
+  Future<bool> saveCategoriesIfChanged(
+      {bool showToastOnNoChange = false}) async {
     final info = widget.appInfo;
-    if (info == null) return;
+    if (info == null) return false;
+    if (!info.isEditable) return false;
     if (!_categoriesChanged) {
-      _toast('변경된 내용이 없습니다.');
-      return;
+      if (showToastOnNoChange) _toast('변경된 내용이 없습니다.');
+      return false;
     }
     if (_selectedPrimary == null) {
       _toast('Primary 카테고리는 필수입니다.');
-      return;
+      return false;
     }
     setState(() {
       _savingCats = true;
@@ -176,15 +229,29 @@ class _AppInfoSectionState extends State<AppInfoSection> {
         primaryCategoryId: _selectedPrimary!,
         secondaryCategoryId: _selectedSecondary,
       );
-      if (!mounted) return;
+      if (!mounted) return false;
       widget.onCategoriesUpdated();
       _toast('카테고리 저장 완료');
+      return true;
     } catch (e) {
       if (mounted) setState(() => _catsError = e);
+      return false;
     } finally {
       if (mounted) setState(() => _savingCats = false);
     }
   }
+
+  bool get hasCatsChanges =>
+      (widget.appInfo?.isEditable ?? false) && _categoriesChanged;
+
+  /// 핀포인트 뱃지용 — 변경된 localization 필드 이름 집합.
+  Set<String> get _changedLocFields => _locDiff().keys.toSet();
+
+  /// 핀포인트 뱃지용 — 카테고리 변경 (primary/secondary).
+  bool get _primaryChanged =>
+      _selectedPrimary != widget.appInfo?.primaryCategoryId;
+  bool get _secondaryChanged =>
+      _selectedSecondary != widget.appInfo?.secondaryCategoryId;
 
   void _toast(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -199,32 +266,43 @@ class _AppInfoSectionState extends State<AppInfoSection> {
   Widget build(BuildContext context) {
     final editable = widget.appInfo?.isEditable ?? false;
     final stateLabel = widget.appInfo?.state ?? '';
+    final changedLoc = _changedLocFields;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SectionLabel('이름 / 부제 (App Info)'),
-        const SizedBox(height: 4),
-        Text(
-          '로케일별. 이름·부제 각각 30자 제한.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+        SectionHeader(
+          label: '앱 정보',
+          updated: hasLocChanges || hasCatsChanges,
+          expanded: _expanded,
+          onTap: () => setState(() => _expanded = !_expanded),
         ),
+        if (_expanded) ...[
+        const SizedBox(height: 16),
         if (widget.appInfo != null && !editable) ...[
-          const SizedBox(height: 8),
           _ReadOnlyAppInfoNotice(stateLabel: stateLabel),
+          const SizedBox(height: 12),
         ],
-        const SizedBox(height: 12),
+        FieldLabel(
+          '이름 (Name)',
+          changed: changedLoc.contains('name'),
+          hint: '30자 제한. 앱의 공식 명칭.',
+        ),
+        const SizedBox(height: 8),
         TextField(
           controller: _nameCtrl,
           enabled: widget.localization != null && !_savingLoc && editable,
           maxLength: 30,
           decoration: const InputDecoration(
-            labelText: '이름 (Name)',
             hintText: '앱의 공식 명칭',
             border: OutlineInputBorder(),
           ),
+        ),
+        const SizedBox(height: 16),
+        FieldLabel(
+          '부제 (Subtitle)',
+          changed: changedLoc.contains('subtitle'),
+          hint: '30자 제한. 아이콘 아래 표시되는 짧은 설명.',
         ),
         const SizedBox(height: 8),
         TextField(
@@ -232,21 +310,30 @@ class _AppInfoSectionState extends State<AppInfoSection> {
           enabled: widget.localization != null && !_savingLoc && editable,
           maxLength: 30,
           decoration: const InputDecoration(
-            labelText: '부제 (Subtitle)',
-            hintText: '아이콘 아래 표시되는 짧은 설명',
+            hintText: '예: 최애와 나만의 프라이빗 메시지',
             border: OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
+        FieldLabel(
+          '개인정보처리방침 URL',
+          changed: changedLoc.contains('privacyPolicyUrl'),
+        ),
+        const SizedBox(height: 8),
         TextField(
           controller: _privacyUrlCtrl,
           enabled: widget.localization != null && !_savingLoc && editable,
           keyboardType: TextInputType.url,
           decoration: const InputDecoration(
-            labelText: '개인정보처리방침 URL',
             hintText: 'https://example.com/privacy',
             border: OutlineInputBorder(),
           ),
+        ),
+        const SizedBox(height: 16),
+        FieldLabel(
+          '개인정보처리방침 본문 (선택)',
+          changed: changedLoc.contains('privacyPolicyText'),
+          hint: '1000자 제한. 카테고리에 따라 URL 대신/함께 본문 요구 시 사용.',
         ),
         const SizedBox(height: 8),
         TextField(
@@ -256,8 +343,7 @@ class _AppInfoSectionState extends State<AppInfoSection> {
           minLines: 3,
           maxLength: 1000,
           decoration: const InputDecoration(
-            labelText: '개인정보처리방침 본문 (선택)',
-            hintText: '카테고리에 따라 URL 대신 또는 함께 본문 텍스트를 요구하는 경우 사용',
+            hintText: '본문이 필요한 경우만 입력',
             border: OutlineInputBorder(),
             alignLabelWithHint: true,
           ),
@@ -275,19 +361,15 @@ class _AppInfoSectionState extends State<AppInfoSection> {
           label: '이름/부제/개인정보처리방침 저장',
         ),
         const SizedBox(height: 32),
-        const SectionLabel('카테고리 (Categories)'),
-        const SizedBox(height: 4),
-        Text(
-          '앱 전체에 1개씩만. Primary는 필수, Secondary는 선택.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+        FieldLabel(
+          'Primary 카테고리',
+          changed: _primaryChanged,
+          hint: '앱 전체에 1개. 필수.',
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         DropdownButtonFormField<String>(
           initialValue: _selectedPrimary,
           decoration: const InputDecoration(
-            labelText: 'Primary 카테고리',
             border: OutlineInputBorder(),
           ),
           items: [
@@ -298,11 +380,16 @@ class _AppInfoSectionState extends State<AppInfoSection> {
               ? null
               : (v) => setState(() => _selectedPrimary = v),
         ),
+        const SizedBox(height: 16),
+        FieldLabel(
+          'Secondary 카테고리',
+          changed: _secondaryChanged,
+          hint: '선택. (없음)으로 두면 빈 값.',
+        ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String?>(
           initialValue: _selectedSecondary,
           decoration: const InputDecoration(
-            labelText: 'Secondary 카테고리 (선택)',
             border: OutlineInputBorder(),
           ),
           items: [
@@ -332,6 +419,7 @@ class _AppInfoSectionState extends State<AppInfoSection> {
               : _saveCategories,
           label: '카테고리 저장',
         ),
+        ],
       ],
     );
   }

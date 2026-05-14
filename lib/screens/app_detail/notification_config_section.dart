@@ -37,6 +37,7 @@ class _NotificationConfigSectionState extends State<NotificationConfigSection> {
   String? _prodVersion;
   String? _sandboxVersion;
   bool _saving = false;
+  bool _expanded = true;
   Object? _error;
 
   @override
@@ -100,6 +101,9 @@ class _NotificationConfigSectionState extends State<NotificationConfigSection> {
     return result;
   }
 
+  bool get _hasChanges => _diff().isNotEmpty;
+  Set<String> get _changedFields => _diff().keys.toSet();
+
   Future<void> _save() async {
     final diff = _diff();
     if (diff.isEmpty) {
@@ -137,10 +141,17 @@ class _NotificationConfigSectionState extends State<NotificationConfigSection> {
 
   @override
   Widget build(BuildContext context) {
+    final changed = _changedFields;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SectionLabel('App Store 서버 알림 (Server Notifications)'),
+        SectionHeader(
+          label: 'App Store 서버 알림 (Server Notifications)',
+          updated: _hasChanges,
+          expanded: _expanded,
+          onTap: () => setState(() => _expanded = !_expanded),
+        ),
+        if (_expanded) ...[
         const SizedBox(height: 4),
         Text(
           'IAP 구독·결제 이벤트를 받을 서버 endpoint. V2 권장. 프로덕션과 샌드박스는 분리.',
@@ -161,37 +172,55 @@ class _NotificationConfigSectionState extends State<NotificationConfigSection> {
           children: [
             Expanded(
               flex: 4,
-              child: TextField(
-                controller: _prodUrlCtrl,
-                enabled: !_saving,
-                keyboardType: TextInputType.url,
-                decoration: const InputDecoration(
-                  labelText: 'URL',
-                  hintText: 'https://api.example.com/asn',
-                  border: OutlineInputBorder(),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FieldLabel(
+                    'URL',
+                    changed: changed.contains('subscriptionStatusUrl'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _prodUrlCtrl,
+                    enabled: !_saving,
+                    keyboardType: TextInputType.url,
+                    decoration: const InputDecoration(
+                      hintText: 'https://api.example.com/asn',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             SizedBox(
-              width: 120,
-              child: DropdownButtonFormField<String>(
-                initialValue: _prodVersion,
-                decoration: const InputDecoration(
-                  labelText: '버전',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  const DropdownMenuItem<String>(
-                    value: null,
-                    child: Text('(없음)'),
+              width: 140,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FieldLabel(
+                    '버전',
+                    changed: changed.contains('subscriptionStatusUrlVersion'),
                   ),
-                  for (final v in _versionOptions)
-                    DropdownMenuItem(value: v, child: Text(v)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: _prodVersion,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: null,
+                        child: Text('(없음)'),
+                      ),
+                      for (final v in _versionOptions)
+                        DropdownMenuItem(value: v, child: Text(v)),
+                    ],
+                    onChanged: _saving
+                        ? null
+                        : (v) => setState(() => _prodVersion = v),
+                  ),
                 ],
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() => _prodVersion = v),
               ),
             ),
           ],
@@ -209,37 +238,56 @@ class _NotificationConfigSectionState extends State<NotificationConfigSection> {
           children: [
             Expanded(
               flex: 4,
-              child: TextField(
-                controller: _sandboxUrlCtrl,
-                enabled: !_saving,
-                keyboardType: TextInputType.url,
-                decoration: const InputDecoration(
-                  labelText: 'URL',
-                  hintText: 'https://sandbox-api.example.com/asn',
-                  border: OutlineInputBorder(),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FieldLabel(
+                    'URL',
+                    changed: changed.contains('subscriptionStatusUrlForSandbox'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _sandboxUrlCtrl,
+                    enabled: !_saving,
+                    keyboardType: TextInputType.url,
+                    decoration: const InputDecoration(
+                      hintText: 'https://sandbox-api.example.com/asn',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             SizedBox(
-              width: 120,
-              child: DropdownButtonFormField<String>(
-                initialValue: _sandboxVersion,
-                decoration: const InputDecoration(
-                  labelText: '버전',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  const DropdownMenuItem<String>(
-                    value: null,
-                    child: Text('(없음)'),
+              width: 140,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FieldLabel(
+                    '버전',
+                    changed: changed
+                        .contains('subscriptionStatusUrlVersionForSandbox'),
                   ),
-                  for (final v in _versionOptions)
-                    DropdownMenuItem(value: v, child: Text(v)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: _sandboxVersion,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: null,
+                        child: Text('(없음)'),
+                      ),
+                      for (final v in _versionOptions)
+                        DropdownMenuItem(value: v, child: Text(v)),
+                    ],
+                    onChanged: _saving
+                        ? null
+                        : (v) => setState(() => _sandboxVersion = v),
+                  ),
                 ],
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() => _sandboxVersion = v),
               ),
             ),
           ],
@@ -254,6 +302,7 @@ class _NotificationConfigSectionState extends State<NotificationConfigSection> {
           onPressed: widget.config == null ? null : _save,
           label: '서버 알림 URL 저장',
         ),
+        ],
       ],
     );
   }

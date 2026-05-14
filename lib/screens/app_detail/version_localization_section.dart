@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../../models/app_store_version_localization.dart';
+import '../../models/parsed_docx.dart';
 import '../../models/team.dart';
 import '../../services/asc_api_client.dart';
+import '../../services/keywords_truncate.dart';
 import 'section_widgets.dart';
 
 /// `appStoreVersionLocalizations` PATCH 영역.
-/// whatsNew / description / keywords / promotionalText 4개 필드 편집.
+/// whatsNew / description / keywords / promotionalText / supportUrl / marketingUrl 편집.
 class VersionLocalizationSection extends StatefulWidget {
   const VersionLocalizationSection({
     super.key,
@@ -15,6 +17,9 @@ class VersionLocalizationSection extends StatefulWidget {
     required this.localization,
     required this.isFirstSubmission,
     required this.onUpdated,
+    this.parsedSection,
+    this.parsedKeywords,
+    this.parsedWhatsNew,
   });
 
   final Team team;
@@ -23,12 +28,24 @@ class VersionLocalizationSection extends StatefulWidget {
   final bool isFirstSubmission;
   final ValueChanged<AppStoreVersionLocalization> onUpdated;
 
+  /// 워드 파일에서 파싱한 현재 로케일의 데이터. null이면 자동 적용 없음.
+  /// 워드 변경 시 description만 자동 적용 (name·subtitle은 AppInfo 쪽).
+  final ParsedLocaleSection? parsedSection;
+
+  /// 키워드 텍스트 파일에서 파싱된 현재 로케일의 키워드. null이면 자동 적용 없음.
+  /// 100자 초과 시 잘라서 적용.
+  final String? parsedKeywords;
+
+  /// 붙여넣기 텍스트에서 파싱된 현재 로케일의 What's New. null이면 자동 적용 없음.
+  /// 첫 출시 버전이면 적용 skip.
+  final String? parsedWhatsNew;
+
   @override
   State<VersionLocalizationSection> createState() =>
-      _VersionLocalizationSectionState();
+      VersionLocalizationSectionState();
 }
 
-class _VersionLocalizationSectionState
+class VersionLocalizationSectionState
     extends State<VersionLocalizationSection> {
   final TextEditingController _whatsNewCtrl = TextEditingController();
   final TextEditingController _descriptionCtrl = TextEditingController();
@@ -38,6 +55,7 @@ class _VersionLocalizationSectionState
   final TextEditingController _marketingUrlCtrl = TextEditingController();
 
   bool _saving = false;
+  bool _expanded = true;
   Object? _error;
 
   @override
@@ -49,7 +67,7 @@ class _VersionLocalizationSectionState
   @override
   void didUpdateWidget(covariant VersionLocalizationSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.localization?.id != widget.localization?.id ||
+    final locChanged = oldWidget.localization?.id != widget.localization?.id ||
         oldWidget.localization?.whatsNew != widget.localization?.whatsNew ||
         oldWidget.localization?.description !=
             widget.localization?.description ||
@@ -59,10 +77,52 @@ class _VersionLocalizationSectionState
         oldWidget.localization?.supportUrl !=
             widget.localization?.supportUrl ||
         oldWidget.localization?.marketingUrl !=
-            widget.localization?.marketingUrl) {
+            widget.localization?.marketingUrl;
+
+    if (locChanged) {
       _syncControllers();
       _error = null;
     }
+
+    // 워드 파싱 결과가 새로 들어왔거나 로케일이 바뀐 시점에 description만 자동 적용.
+    // 부제 다음 ~ 구분선 사이 줄들은 워드 양식상 안내 문구라 ASC에 매핑하지 않음.
+    final parsedChanged =
+        oldWidget.parsedSection?.locale != widget.parsedSection?.locale ||
+            oldWidget.parsedSection?.description !=
+                widget.parsedSection?.description;
+    final keywordsChanged = oldWidget.parsedKeywords != widget.parsedKeywords;
+    final whatsNewChanged = oldWidget.parsedWhatsNew != widget.parsedWhatsNew;
+    if (locChanged || parsedChanged) {
+      _applyParsedSection();
+    }
+    if (locChanged || keywordsChanged) {
+      _applyParsedKeywords();
+    }
+    if (locChanged || whatsNewChanged) {
+      _applyParsedWhatsNew();
+    }
+  }
+
+  void _applyParsedWhatsNew() {
+    if (widget.isFirstSubmission) return;
+    final raw = widget.parsedWhatsNew;
+    if (raw == null || raw.isEmpty) return;
+    _whatsNewCtrl.text = raw;
+  }
+
+  void _applyParsedSection() {
+    final parsed = widget.parsedSection;
+    if (parsed == null) return;
+    if (parsed.description != null && parsed.description!.isNotEmpty) {
+      _descriptionCtrl.text = parsed.description!;
+    }
+  }
+
+  void _applyParsedKeywords() {
+    final raw = widget.parsedKeywords;
+    if (raw == null || raw.isEmpty) return;
+    // ASC 키워드 100자 제한 — 콤마 단위 토큰을 유지하면서 잘라낸다.
+    _keywordsCtrl.text = truncateKeywords(raw, 100);
   }
 
   @override
@@ -115,17 +175,24 @@ class _VersionLocalizationSectionState
   }
 
   Future<void> _save() async {
+    await saveIfChanged(showToastOnNoChange: true);
+  }
+
+  /// 외부에서 트리거 가능한 저장 메서드. 변경 없으면 무동작 (조용히 종료).
+  /// [showToastOnNoChange]가 true면 변경 없을 때 사용자에게 토스트 안내.
+  /// 반환값: 실제 PATCH가 성공했으면 true, skip/실패면 false.
+  Future<bool> saveIfChanged({bool showToastOnNoChange = false}) async {
     final loc = widget.localization;
-    if (loc == null) return;
+    if (loc == null) return false;
     final diff = _diff();
     if (diff.isEmpty) {
-      _toast('변경된 내용이 없습니다.');
-      return;
+      if (showToastOnNoChange) _toast('변경된 내용이 없습니다.');
+      return false;
     }
     if (diff.containsKey('whatsNew') &&
         (diff['whatsNew']?.length ?? 0) < 4) {
       _toast("ASC 정책상 'What's New'는 최소 4자 이상 입력해야 합니다.");
-      return;
+      return false;
     }
 
     setState(() {
@@ -138,15 +205,23 @@ class _VersionLocalizationSectionState
         loc.id,
         diff,
       );
-      if (!mounted) return;
+      if (!mounted) return false;
       widget.onUpdated(updated);
       _toast("'${loc.locale}' 버전 정보 저장 완료 — ${diff.keys.join(', ')}");
+      return true;
     } catch (e) {
       if (mounted) setState(() => _error = e);
+      return false;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
+
+  /// 현재 controller 값이 ASC 원본과 다른지. UI 뱃지/전체 적용 판단용.
+  bool get hasChanges => _diff().isNotEmpty;
+
+  /// 핀포인트 뱃지용 — 변경된 필드 이름 집합.
+  Set<String> get _changedFields => _diff().keys.toSet();
 
   void _toast(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -160,10 +235,23 @@ class _VersionLocalizationSectionState
   @override
   Widget build(BuildContext context) {
     final enabled = widget.localization != null && !_saving;
+    final changed = _changedFields;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SectionLabel("이 버전의 새로운 기능 (What's New)"),
+        SectionHeader(
+          label: '버전 로컬라이제이션',
+          updated: hasChanges,
+          expanded: _expanded,
+          onTap: () => setState(() => _expanded = !_expanded),
+        ),
+        if (_expanded) ...[
+        const SizedBox(height: 16),
+        FieldLabel(
+          "이 버전의 새로운 기능 (What's New)",
+          changed: changed.contains('whatsNew'),
+          hint: 'ASC 정책: 최소 4자 이상 입력 필요',
+        ),
         const SizedBox(height: 8),
         if (widget.isFirstSubmission) ...[
           const FirstSubmissionNotice(),
@@ -179,13 +267,15 @@ class _VersionLocalizationSectionState
             hintText: widget.isFirstSubmission
                 ? '첫 출시 버전이라 입력이 비활성화되어 있습니다.'
                 : '예: 버그 수정 및 성능 개선.\n   - 새 기능 …\n   - 알려진 이슈 …',
-            helperText: 'ASC 정책: 최소 4자 이상 입력 필요',
             border: const OutlineInputBorder(),
             alignLabelWithHint: true,
           ),
         ),
         const SizedBox(height: 24),
-        const SectionLabel('설명 (Description)'),
+        FieldLabel(
+          '설명 (Description)',
+          changed: changed.contains('description'),
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _descriptionCtrl,
@@ -200,9 +290,11 @@ class _VersionLocalizationSectionState
           ),
         ),
         const SizedBox(height: 24),
-        const SectionLabel('키워드 (Keywords)'),
-        const SizedBox(height: 4),
-        _Hint('콤마(,)로 구분. 100자 제한.'),
+        FieldLabel(
+          '키워드 (Keywords)',
+          changed: changed.contains('keywords'),
+          hint: '콤마(,)로 구분. 100자 제한.',
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _keywordsCtrl,
@@ -216,9 +308,11 @@ class _VersionLocalizationSectionState
           ),
         ),
         const SizedBox(height: 24),
-        const SectionLabel('프로모션 텍스트 (Promotional Text)'),
-        const SizedBox(height: 4),
-        _Hint('170자 제한. 앱 업데이트 없이 수시 변경 가능.'),
+        FieldLabel(
+          '프로모션 텍스트 (Promotional Text)',
+          changed: changed.contains('promotionalText'),
+          hint: '170자 제한. 앱 업데이트 없이 수시 변경 가능.',
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _promotionalCtrl,
@@ -233,9 +327,11 @@ class _VersionLocalizationSectionState
           ),
         ),
         const SizedBox(height: 24),
-        const SectionLabel('지원 URL (Support URL)'),
-        const SizedBox(height: 4),
-        _Hint('App Store 상세 페이지의 "앱 지원" 링크. 필수 항목.'),
+        FieldLabel(
+          '지원 URL (Support URL)',
+          changed: changed.contains('supportUrl'),
+          hint: 'App Store 상세 페이지의 "앱 지원" 링크. 필수 항목.',
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _supportUrlCtrl,
@@ -247,9 +343,11 @@ class _VersionLocalizationSectionState
           ),
         ),
         const SizedBox(height: 24),
-        const SectionLabel('마케팅 URL (Marketing URL)'),
-        const SizedBox(height: 4),
-        _Hint('App Store 상세 페이지의 "앱 웹사이트" 링크. 선택 항목.'),
+        FieldLabel(
+          '마케팅 URL (Marketing URL)',
+          changed: changed.contains('marketingUrl'),
+          hint: 'App Store 상세 페이지의 "앱 웹사이트" 링크. 선택 항목.',
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _marketingUrlCtrl,
@@ -269,22 +367,9 @@ class _VersionLocalizationSectionState
           saving: _saving,
           onPressed: widget.localization == null ? null : _save,
         ),
+        ],
       ],
     );
   }
 }
 
-class _Hint extends StatelessWidget {
-  const _Hint(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-    );
-  }
-}
