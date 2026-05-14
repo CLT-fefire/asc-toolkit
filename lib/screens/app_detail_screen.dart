@@ -195,6 +195,17 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       return;
     }
 
+    // ASC 422 사전 차단: What's New는 최소 4자
+    if (diff.containsKey('whatsNew') && (diff['whatsNew']?.length ?? 0) < 4) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("ASC 정책상 'What's New'는 최소 4자 이상 입력해야 합니다."),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _saving = true;
       _error = null;
@@ -321,6 +332,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
               hintText: _isFirstSubmission
                   ? '첫 출시 버전이라 입력이 비활성화되어 있습니다.'
                   : '예: 버그 수정 및 성능 개선.\n   - 새 기능 …\n   - 알려진 이슈 …',
+              helperText: 'ASC 정책: 최소 4자 이상 입력 필요',
               border: const OutlineInputBorder(),
               alignLabelWithHint: true,
             ),
