@@ -46,7 +46,7 @@ class SectionHeader extends StatelessWidget {
   }
 }
 
-/// 변경 사항이 있음을 표시하는 작은 뱃지.
+/// 섹션 헤더 옆에 붙는 큰 뱃지 (변경 있음 요약).
 class UpdatedBadge extends StatelessWidget {
   const UpdatedBadge({super.key});
 
@@ -54,18 +54,103 @@ class UpdatedBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: scheme.primaryContainer,
+        color: scheme.primary,
         borderRadius: BorderRadius.circular(12),
       ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.edit_note, size: 14, color: scheme.onPrimary),
+          const SizedBox(width: 4),
+          Text(
+            '변경 있음',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: scheme.onPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 개별 필드 옆에 붙는 작은 핀포인트 뱃지.
+class FieldChangeBadge extends StatelessWidget {
+  const FieldChangeBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: scheme.tertiary,
+        borderRadius: BorderRadius.circular(6),
+      ),
       child: Text(
-        'updated',
+        '수정',
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: scheme.onPrimaryContainer,
-              fontWeight: FontWeight.w600,
+              color: scheme.onTertiary,
+              fontWeight: FontWeight.w700,
+              fontSize: 10,
+              height: 1.1,
             ),
       ),
+    );
+  }
+}
+
+/// TextField 위에 두는 "필드 라벨 + (옵션) 변경 뱃지" 한 줄.
+///
+/// InputDecoration.labelText를 쓰면 floating label과 함께 뱃지를 넣기 어려워서,
+/// 별도 라벨 줄로 끌어올린 뒤 TextField는 hint만 노출하는 패턴.
+class FieldLabel extends StatelessWidget {
+  const FieldLabel(
+    this.text, {
+    super.key,
+    this.changed = false,
+    this.hint,
+  });
+
+  final String text;
+  final bool changed;
+
+  /// 라벨 아래에 작게 표시할 보조 안내 (예: "100자 제한, 콤마 구분").
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              text,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            if (changed) ...[
+              const SizedBox(width: 8),
+              const FieldChangeBadge(),
+            ],
+          ],
+        ),
+        if (hint != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            hint!,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+        ],
+      ],
     );
   }
 }

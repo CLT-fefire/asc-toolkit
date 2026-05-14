@@ -109,6 +109,9 @@ class _ReviewDetailSectionState extends State<ReviewDetailSection> {
     return result;
   }
 
+  bool get _hasChanges => _diff().isNotEmpty;
+  Set<String> get _changedFields => _diff().keys.toSet();
+
   Future<void> _save() async {
     final rd = widget.reviewDetail;
     if (rd == null) return;
@@ -149,10 +152,14 @@ class _ReviewDetailSectionState extends State<ReviewDetailSection> {
   @override
   Widget build(BuildContext context) {
     final hasRd = widget.reviewDetail != null;
+    final changed = _changedFields;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SectionLabel('심사 정보 (App Review)'),
+        SectionHeader(
+          label: '심사 정보 (App Review)',
+          updated: _hasChanges,
+        ),
         const SizedBox(height: 4),
         Text(
           'Apple 심사자에게 전달되는 정보. 선택한 버전에 귀속.',
@@ -160,7 +167,7 @@ class _ReviewDetailSectionState extends State<ReviewDetailSection> {
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
         if (!hasRd)
           Container(
             padding: const EdgeInsets.all(12),
@@ -175,39 +182,67 @@ class _ReviewDetailSectionState extends State<ReviewDetailSection> {
           )
         else ...[
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: TextField(
-                  controller: _firstNameCtrl,
-                  enabled: !_saving,
-                  decoration: const InputDecoration(
-                    labelText: '담당자 이름 (First)',
-                    border: OutlineInputBorder(),
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    FieldLabel(
+                      '담당자 이름 (First)',
+                      changed: changed.contains('contactFirstName'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _firstNameCtrl,
+                      enabled: !_saving,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 12),
               Expanded(
-                child: TextField(
-                  controller: _lastNameCtrl,
-                  enabled: !_saving,
-                  decoration: const InputDecoration(
-                    labelText: '담당자 성 (Last)',
-                    border: OutlineInputBorder(),
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    FieldLabel(
+                      '담당자 성 (Last)',
+                      changed: changed.contains('contactLastName'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _lastNameCtrl,
+                      enabled: !_saving,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 16),
+          FieldLabel(
+            '담당자 전화번호',
+            changed: changed.contains('contactPhone'),
           ),
           const SizedBox(height: 8),
           TextField(
             controller: _phoneCtrl,
             enabled: !_saving,
             decoration: const InputDecoration(
-              labelText: '담당자 전화번호',
               hintText: '+82-10-1234-5678',
               border: OutlineInputBorder(),
             ),
+          ),
+          const SizedBox(height: 16),
+          FieldLabel(
+            '담당자 이메일',
+            changed: changed.contains('contactEmail'),
           ),
           const SizedBox(height: 8),
           TextField(
@@ -215,7 +250,6 @@ class _ReviewDetailSectionState extends State<ReviewDetailSection> {
             enabled: !_saving,
             keyboardType: TextInputType.emailAddress,
             decoration: const InputDecoration(
-              labelText: '담당자 이메일',
               border: OutlineInputBorder(),
             ),
           ),
@@ -225,18 +259,35 @@ class _ReviewDetailSectionState extends State<ReviewDetailSection> {
             onChanged: _saving
                 ? null
                 : (v) => setState(() => _demoRequired = v),
-            title: const Text('데모 계정 필요'),
+            title: Row(
+              children: [
+                const Text('데모 계정 필요'),
+                if (changed.contains('demoAccountRequired')) ...[
+                  const SizedBox(width: 8),
+                  const FieldChangeBadge(),
+                ],
+              ],
+            ),
             subtitle: const Text('심사자가 로그인해야 앱 기능을 확인할 수 있는 경우 ON'),
             contentPadding: EdgeInsets.zero,
+          ),
+          const SizedBox(height: 8),
+          FieldLabel(
+            '데모 계정 이름',
+            changed: changed.contains('demoAccountName'),
           ),
           const SizedBox(height: 8),
           TextField(
             controller: _demoAccountCtrl,
             enabled: !_saving && _demoRequired,
             decoration: const InputDecoration(
-              labelText: '데모 계정 이름',
               border: OutlineInputBorder(),
             ),
+          ),
+          const SizedBox(height: 16),
+          FieldLabel(
+            '데모 계정 비밀번호',
+            changed: changed.contains('demoAccountPassword'),
           ),
           const SizedBox(height: 8),
           TextField(
@@ -244,19 +295,22 @@ class _ReviewDetailSectionState extends State<ReviewDetailSection> {
             enabled: !_saving && _demoRequired,
             obscureText: true,
             decoration: const InputDecoration(
-              labelText: '데모 계정 비밀번호',
               border: OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 16),
+          FieldLabel(
+            '메모 (Notes)',
+            changed: changed.contains('notes'),
+            hint: '심사자가 알아야 할 추가 정보. 4000자 제한.',
+          ),
+          const SizedBox(height: 8),
           TextField(
             controller: _notesCtrl,
             enabled: !_saving,
             maxLines: 6,
             minLines: 3,
             decoration: const InputDecoration(
-              labelText: '메모 (Notes)',
-              hintText: '심사자가 알아야 할 추가 정보. 4000자 제한.',
               border: OutlineInputBorder(),
               alignLabelWithHint: true,
             ),

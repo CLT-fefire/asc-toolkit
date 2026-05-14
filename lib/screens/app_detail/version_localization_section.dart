@@ -17,6 +17,7 @@ class VersionLocalizationSection extends StatefulWidget {
     required this.isFirstSubmission,
     required this.onUpdated,
     this.parsedSection,
+    this.parsedKeywords,
   });
 
   final Team team;
@@ -26,8 +27,12 @@ class VersionLocalizationSection extends StatefulWidget {
   final ValueChanged<AppStoreVersionLocalization> onUpdated;
 
   /// 워드 파일에서 파싱한 현재 로케일의 데이터. null이면 자동 적용 없음.
-  /// 워드 변경 시 description / promotionalText만 자동 적용 (name·subtitle은 AppInfo 쪽).
+  /// 워드 변경 시 description만 자동 적용 (name·subtitle은 AppInfo 쪽).
   final ParsedLocaleSection? parsedSection;
+
+  /// 키워드 텍스트 파일에서 파싱된 현재 로케일의 키워드. null이면 자동 적용 없음.
+  /// 100자 초과 시 잘라서 적용.
+  final String? parsedKeywords;
 
   @override
   State<VersionLocalizationSection> createState() =>
@@ -78,8 +83,12 @@ class VersionLocalizationSectionState
         oldWidget.parsedSection?.locale != widget.parsedSection?.locale ||
             oldWidget.parsedSection?.description !=
                 widget.parsedSection?.description;
+    final keywordsChanged = oldWidget.parsedKeywords != widget.parsedKeywords;
     if (locChanged || parsedChanged) {
       _applyParsedSection();
+    }
+    if (locChanged || keywordsChanged) {
+      _applyParsedKeywords();
     }
   }
 
@@ -89,6 +98,29 @@ class VersionLocalizationSectionState
     if (parsed.description != null && parsed.description!.isNotEmpty) {
       _descriptionCtrl.text = parsed.description!;
     }
+  }
+
+  void _applyParsedKeywords() {
+    final raw = widget.parsedKeywords;
+    if (raw == null || raw.isEmpty) return;
+    // ASC 키워드 100자 제한 — 콤마 단위 토큰을 유지하면서 잘라낸다.
+    _keywordsCtrl.text = _truncateKeywords(raw, 100);
+  }
+
+  /// 콤마 구분 키워드 문자열을 [max]자 이내로 자른다.
+  /// 마지막에 잘리는 토큰이 부분 단어가 되지 않도록, 콤마 경계에서 컷.
+  String _truncateKeywords(String input, int max) {
+    final compact = input.replaceAll(RegExp(r'\s*,\s*'), ',').trim();
+    if (compact.length <= max) return compact;
+    final tokens = compact.split(',');
+    final buf = StringBuffer();
+    for (final t in tokens) {
+      final extra = buf.isEmpty ? t.length : t.length + 1; // +1 for comma
+      if (buf.length + extra > max) break;
+      if (buf.isNotEmpty) buf.write(',');
+      buf.write(t);
+    }
+    return buf.toString();
   }
 
   @override
@@ -186,6 +218,9 @@ class VersionLocalizationSectionState
   /// 현재 controller 값이 ASC 원본과 다른지. UI 뱃지/전체 적용 판단용.
   bool get hasChanges => _diff().isNotEmpty;
 
+  /// 핀포인트 뱃지용 — 변경된 필드 이름 집합.
+  Set<String> get _changedFields => _diff().keys.toSet();
+
   void _toast(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -198,6 +233,7 @@ class VersionLocalizationSectionState
   @override
   Widget build(BuildContext context) {
     final enabled = widget.localization != null && !_saving;
+    final changed = _changedFields;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -206,7 +242,11 @@ class VersionLocalizationSectionState
           updated: hasChanges,
         ),
         const SizedBox(height: 16),
-        const SectionLabel("이 버전의 새로운 기능 (What's New)"),
+        FieldLabel(
+          "이 버전의 새로운 기능 (What's New)",
+          changed: changed.contains('whatsNew'),
+          hint: 'ASC 정책: 최소 4자 이상 입력 필요',
+        ),
         const SizedBox(height: 8),
         if (widget.isFirstSubmission) ...[
           const FirstSubmissionNotice(),
@@ -222,13 +262,15 @@ class VersionLocalizationSectionState
             hintText: widget.isFirstSubmission
                 ? '첫 출시 버전이라 입력이 비활성화되어 있습니다.'
                 : '예: 버그 수정 및 성능 개선.\n   - 새 기능 …\n   - 알려진 이슈 …',
-            helperText: 'ASC 정책: 최소 4자 이상 입력 필요',
             border: const OutlineInputBorder(),
             alignLabelWithHint: true,
           ),
         ),
         const SizedBox(height: 24),
-        const SectionLabel('설명 (Description)'),
+        FieldLabel(
+          '설명 (Description)',
+          changed: changed.contains('description'),
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _descriptionCtrl,
@@ -243,9 +285,11 @@ class VersionLocalizationSectionState
           ),
         ),
         const SizedBox(height: 24),
-        const SectionLabel('키워드 (Keywords)'),
-        const SizedBox(height: 4),
-        _Hint('콤마(,)로 구분. 100자 제한.'),
+        FieldLabel(
+          '키워드 (Keywords)',
+          changed: changed.contains('keywords'),
+          hint: '콤마(,)로 구분. 100자 제한.',
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _keywordsCtrl,
@@ -259,9 +303,11 @@ class VersionLocalizationSectionState
           ),
         ),
         const SizedBox(height: 24),
-        const SectionLabel('프로모션 텍스트 (Promotional Text)'),
-        const SizedBox(height: 4),
-        _Hint('170자 제한. 앱 업데이트 없이 수시 변경 가능.'),
+        FieldLabel(
+          '프로모션 텍스트 (Promotional Text)',
+          changed: changed.contains('promotionalText'),
+          hint: '170자 제한. 앱 업데이트 없이 수시 변경 가능.',
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _promotionalCtrl,
@@ -276,9 +322,11 @@ class VersionLocalizationSectionState
           ),
         ),
         const SizedBox(height: 24),
-        const SectionLabel('지원 URL (Support URL)'),
-        const SizedBox(height: 4),
-        _Hint('App Store 상세 페이지의 "앱 지원" 링크. 필수 항목.'),
+        FieldLabel(
+          '지원 URL (Support URL)',
+          changed: changed.contains('supportUrl'),
+          hint: 'App Store 상세 페이지의 "앱 지원" 링크. 필수 항목.',
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _supportUrlCtrl,
@@ -290,9 +338,11 @@ class VersionLocalizationSectionState
           ),
         ),
         const SizedBox(height: 24),
-        const SectionLabel('마케팅 URL (Marketing URL)'),
-        const SizedBox(height: 4),
-        _Hint('App Store 상세 페이지의 "앱 웹사이트" 링크. 선택 항목.'),
+        FieldLabel(
+          '마케팅 URL (Marketing URL)',
+          changed: changed.contains('marketingUrl'),
+          hint: 'App Store 상세 페이지의 "앱 웹사이트" 링크. 선택 항목.',
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: _marketingUrlCtrl,
@@ -317,17 +367,3 @@ class VersionLocalizationSectionState
   }
 }
 
-class _Hint extends StatelessWidget {
-  const _Hint(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-    );
-  }
-}

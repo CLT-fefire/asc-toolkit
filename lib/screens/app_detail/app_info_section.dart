@@ -242,6 +242,15 @@ class AppInfoSectionState extends State<AppInfoSection> {
   bool get hasCatsChanges =>
       (widget.appInfo?.isEditable ?? false) && _categoriesChanged;
 
+  /// 핀포인트 뱃지용 — 변경된 localization 필드 이름 집합.
+  Set<String> get _changedLocFields => _locDiff().keys.toSet();
+
+  /// 핀포인트 뱃지용 — 카테고리 변경 (primary/secondary).
+  bool get _primaryChanged =>
+      _selectedPrimary != widget.appInfo?.primaryCategoryId;
+  bool get _secondaryChanged =>
+      _selectedSecondary != widget.appInfo?.secondaryCategoryId;
+
   void _toast(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -255,6 +264,7 @@ class AppInfoSectionState extends State<AppInfoSection> {
   Widget build(BuildContext context) {
     final editable = widget.appInfo?.isEditable ?? false;
     final stateLabel = widget.appInfo?.state ?? '';
+    final changedLoc = _changedLocFields;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -264,28 +274,30 @@ class AppInfoSectionState extends State<AppInfoSection> {
           updated: hasLocChanges || hasCatsChanges,
         ),
         const SizedBox(height: 16),
-        const SectionLabel('이름 / 부제 (App Info)'),
-        const SizedBox(height: 4),
-        Text(
-          '로케일별. 이름·부제 각각 30자 제한.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-        ),
         if (widget.appInfo != null && !editable) ...[
-          const SizedBox(height: 8),
           _ReadOnlyAppInfoNotice(stateLabel: stateLabel),
+          const SizedBox(height: 12),
         ],
-        const SizedBox(height: 12),
+        FieldLabel(
+          '이름 (Name)',
+          changed: changedLoc.contains('name'),
+          hint: '30자 제한. 앱의 공식 명칭.',
+        ),
+        const SizedBox(height: 8),
         TextField(
           controller: _nameCtrl,
           enabled: widget.localization != null && !_savingLoc && editable,
           maxLength: 30,
           decoration: const InputDecoration(
-            labelText: '이름 (Name)',
             hintText: '앱의 공식 명칭',
             border: OutlineInputBorder(),
           ),
+        ),
+        const SizedBox(height: 16),
+        FieldLabel(
+          '부제 (Subtitle)',
+          changed: changedLoc.contains('subtitle'),
+          hint: '30자 제한. 아이콘 아래 표시되는 짧은 설명.',
         ),
         const SizedBox(height: 8),
         TextField(
@@ -293,21 +305,30 @@ class AppInfoSectionState extends State<AppInfoSection> {
           enabled: widget.localization != null && !_savingLoc && editable,
           maxLength: 30,
           decoration: const InputDecoration(
-            labelText: '부제 (Subtitle)',
-            hintText: '아이콘 아래 표시되는 짧은 설명',
+            hintText: '예: 최애와 나만의 프라이빗 메시지',
             border: OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
+        FieldLabel(
+          '개인정보처리방침 URL',
+          changed: changedLoc.contains('privacyPolicyUrl'),
+        ),
+        const SizedBox(height: 8),
         TextField(
           controller: _privacyUrlCtrl,
           enabled: widget.localization != null && !_savingLoc && editable,
           keyboardType: TextInputType.url,
           decoration: const InputDecoration(
-            labelText: '개인정보처리방침 URL',
             hintText: 'https://example.com/privacy',
             border: OutlineInputBorder(),
           ),
+        ),
+        const SizedBox(height: 16),
+        FieldLabel(
+          '개인정보처리방침 본문 (선택)',
+          changed: changedLoc.contains('privacyPolicyText'),
+          hint: '1000자 제한. 카테고리에 따라 URL 대신/함께 본문 요구 시 사용.',
         ),
         const SizedBox(height: 8),
         TextField(
@@ -317,8 +338,7 @@ class AppInfoSectionState extends State<AppInfoSection> {
           minLines: 3,
           maxLength: 1000,
           decoration: const InputDecoration(
-            labelText: '개인정보처리방침 본문 (선택)',
-            hintText: '카테고리에 따라 URL 대신 또는 함께 본문 텍스트를 요구하는 경우 사용',
+            hintText: '본문이 필요한 경우만 입력',
             border: OutlineInputBorder(),
             alignLabelWithHint: true,
           ),
@@ -336,19 +356,15 @@ class AppInfoSectionState extends State<AppInfoSection> {
           label: '이름/부제/개인정보처리방침 저장',
         ),
         const SizedBox(height: 32),
-        const SectionLabel('카테고리 (Categories)'),
-        const SizedBox(height: 4),
-        Text(
-          '앱 전체에 1개씩만. Primary는 필수, Secondary는 선택.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+        FieldLabel(
+          'Primary 카테고리',
+          changed: _primaryChanged,
+          hint: '앱 전체에 1개. 필수.',
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         DropdownButtonFormField<String>(
           initialValue: _selectedPrimary,
           decoration: const InputDecoration(
-            labelText: 'Primary 카테고리',
             border: OutlineInputBorder(),
           ),
           items: [
@@ -359,11 +375,16 @@ class AppInfoSectionState extends State<AppInfoSection> {
               ? null
               : (v) => setState(() => _selectedPrimary = v),
         ),
+        const SizedBox(height: 16),
+        FieldLabel(
+          'Secondary 카테고리',
+          changed: _secondaryChanged,
+          hint: '선택. (없음)으로 두면 빈 값.',
+        ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String?>(
           initialValue: _selectedSecondary,
           decoration: const InputDecoration(
-            labelText: 'Secondary 카테고리 (선택)',
             border: OutlineInputBorder(),
           ),
           items: [
