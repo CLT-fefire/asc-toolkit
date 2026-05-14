@@ -1,3 +1,4 @@
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../models/app_category.dart';
@@ -8,8 +9,10 @@ import '../models/app_store_review_detail.dart';
 import '../models/app_store_version.dart';
 import '../models/app_store_version_localization.dart';
 import '../models/app_summary.dart';
+import '../models/parsed_docx.dart';
 import '../models/team.dart';
 import '../services/asc_api_client.dart';
+import '../services/docx_parser.dart';
 import '../services/team_repository.dart';
 import 'app_detail/app_info_section.dart';
 import 'app_detail/notification_config_section.dart';
@@ -36,6 +39,19 @@ class AppDetailScreen extends StatefulWidget {
 class _AppDetailScreenState extends State<AppDetailScreen> {
   late final AscApiClient _client =
       AscApiClient(repository: widget.repository);
+  final DocxParser _docxParser = DocxParser();
+
+  // 워드 파싱 결과 (로케일별 섹션)
+  ParsedDocx? _parsedDocx;
+  String? _docxFileName;
+
+  // 섹션 state 외부 접근용 (전체 적용 버튼에서 사용)
+  final GlobalKey<VersionLocalizationSectionState> _versionLocKey =
+      GlobalKey<VersionLocalizationSectionState>();
+  final GlobalKey<AppInfoSectionState> _appInfoKey =
+      GlobalKey<AppInfoSectionState>();
+
+  bool _applyingAll = false;
 
   // 버전
   List<AppStoreVersion> _versions = const [];
@@ -268,6 +284,113 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
     setState(() => _notificationConfig = updated);
   }
 
+  // ---- 워드 파일 첨부 ----
+
+  Future<void> _pickDocx() async {
+    const docxGroup = XTypeGroup(
+      label: 'App Description (.docx)',
+      extensions: <String>['docx'],
+    );
+    const anyGroup = XTypeGroup(label: '모든 파일');
+
+    final XFile? file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[docxGroup, anyGroup],
+    );
+    if (file == null) return;
+
+    try {
+      final bytes = await file.readAsBytes();
+      final parsed = _docxParser.parse(bytes);
+      if (!mounted) return;
+      setState(() {
+        _parsedDocx = parsed;
+        _docxFileName = file.name;
+      });
+      final summary = parsed.sections.isEmpty
+          ? '인식된 언어 헤더가 없습니다.'
+          : '${parsed.sections.length}개 언어 인식: '
+              '${parsed.sections.keys.join(", ")}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('워드 파일 파싱 완료 — $summary'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('워드 파싱 실패: $e'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _clearDocx() {
+    setState(() {
+      _parsedDocx = null;
+      _docxFileName = null;
+    });
+  }
+
+  /// 현재 선택된 로케일의 모든 변경사항 일괄 PATCH.
+  /// 버전 로컬라이제이션 → 앱 정보 로컬라이제이션 → 카테고리 순.
+  Future<void> _applyAll() async {
+    setState(() => _applyingAll = true);
+    int success = 0;
+    int skipped = 0;
+    final errors = <String>[];
+
+    Future<void> run(String label, Future<bool> Function() task) async {
+      try {
+        final ok = await task();
+        if (ok) {
+          success++;
+        } else {
+          skipped++;
+        }
+      } catch (e) {
+        errors.add('$label: $e');
+      }
+    }
+
+    await run('버전 로컬라이제이션',
+        () => _versionLocKey.currentState?.saveIfChanged() ?? Future.value(false));
+    await run(
+        '앱 정보 로컬라이제이션',
+        () =>
+            _appInfoKey.currentState?.saveLocalizationIfChanged() ??
+            Future.value(false));
+    await run(
+        '카테고리',
+        () =>
+            _appInfoKey.currentState?.saveCategoriesIfChanged() ??
+            Future.value(false));
+
+    if (!mounted) return;
+    setState(() => _applyingAll = false);
+
+    final parts = <String>[];
+    if (success > 0) parts.add('$success건 저장');
+    if (skipped > 0) parts.add('$skipped건 변경 없음');
+    if (errors.isNotEmpty) parts.add('${errors.length}건 실패');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          parts.isEmpty ? '적용할 변경이 없습니다.' : parts.join(' · '),
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  ParsedLocaleSection? get _currentParsedSection {
+    final locale = _selectedLocale;
+    if (locale == null) return null;
+    return _parsedDocx?.sections[locale];
+  }
+
   // ---- Build ----
 
   @override
@@ -306,6 +429,15 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _AppMetaCard(app: widget.app),
+          const SizedBox(height: 16),
+          _DocxAttachCard(
+            fileName: _docxFileName,
+            parsed: _parsedDocx,
+            applyingAll: _applyingAll,
+            onPick: _pickDocx,
+            onClear: _clearDocx,
+            onApplyAll: _applyAll,
+          ),
           const SizedBox(height: 24),
           const SectionLabel('버전'),
           const SizedBox(height: 8),
@@ -356,14 +488,17 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
           ],
           const SizedBox(height: 32),
           VersionLocalizationSection(
+            key: _versionLocKey,
             team: widget.team,
             client: _client,
             localization: _selectedVersionLoc,
             isFirstSubmission: _isFirstSubmission,
             onUpdated: _onVersionLocUpdated,
+            parsedSection: _currentParsedSection,
           ),
           const Divider(height: 64),
           AppInfoSection(
+            key: _appInfoKey,
             team: widget.team,
             client: _client,
             appInfo: _selectedAppInfo,
@@ -371,6 +506,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
             categories: _categories,
             onLocalizationUpdated: _onAppInfoLocUpdated,
             onCategoriesUpdated: _onCategoriesUpdated,
+            parsedSection: _currentParsedSection,
           ),
           const Divider(height: 64),
           ReviewDetailSection(
@@ -390,6 +526,162 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
           const SizedBox(height: 32),
         ],
       ),
+    );
+  }
+}
+
+class _DocxAttachCard extends StatelessWidget {
+  const _DocxAttachCard({
+    required this.fileName,
+    required this.parsed,
+    required this.applyingAll,
+    required this.onPick,
+    required this.onClear,
+    required this.onApplyAll,
+  });
+
+  final String? fileName;
+  final ParsedDocx? parsed;
+  final bool applyingAll;
+  final VoidCallback onPick;
+  final VoidCallback onClear;
+  final VoidCallback onApplyAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final hasParsed = parsed != null && !parsed!.isEmpty;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: scheme.secondaryContainer.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.secondary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.description_outlined, color: scheme.onSecondaryContainer),
+              const SizedBox(width: 8),
+              Text(
+                '워드 파일 자동 입력',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+              const Spacer(),
+              if (fileName != null)
+                IconButton(
+                  tooltip: '초기화',
+                  onPressed: applyingAll ? null : onClear,
+                  icon: const Icon(Icons.close),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '.docx를 첨부하면 로케일별 이름·부제·설명·프로모션 텍스트가 자동으로 채워집니다. '
+            '변경 사항이 있는 섹션에는 "updated" 뱃지가 표시되고, "전체 변경 적용"으로 한 번에 PATCH 가능합니다.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: applyingAll ? null : onPick,
+                icon: const Icon(Icons.upload_file),
+                label: const Text('.docx 첨부'),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  fileName ?? '아직 첨부된 파일이 없습니다.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (hasParsed)
+                FilledButton.icon(
+                  onPressed: applyingAll ? null : onApplyAll,
+                  icon: applyingAll
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.publish_outlined),
+                  label: Text(applyingAll ? '적용 중…' : '전체 변경 적용'),
+                ),
+            ],
+          ),
+          if (hasParsed) ...[
+            const SizedBox(height: 12),
+            _ParsedSummary(parsed: parsed!),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ParsedSummary extends StatelessWidget {
+  const _ParsedSummary({required this.parsed});
+  final ParsedDocx parsed;
+
+  @override
+  Widget build(BuildContext context) {
+    final locales = parsed.sections.keys.toList();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          '인식된 로케일:',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        for (final l in locales)
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              l,
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+          ),
+        if (parsed.unknownHeaders.isNotEmpty) ...[
+          Text(
+            '· 매핑 실패:',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+          ),
+          for (final h in parsed.unknownHeaders)
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.errorContainer,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                h,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                    ),
+              ),
+            ),
+        ],
+      ],
     );
   }
 }

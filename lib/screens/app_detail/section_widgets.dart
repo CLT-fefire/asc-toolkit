@@ -16,6 +16,60 @@ class SectionLabel extends StatelessWidget {
   }
 }
 
+/// 섹션 전체 헤더 (큰 라벨 + 옵션 "updated" 뱃지).
+/// 워드 파일 자동 적용 or 사용자 직접 편집으로 변경 사항이 있으면 뱃지 표시.
+class SectionHeader extends StatelessWidget {
+  const SectionHeader({
+    super.key,
+    required this.label,
+    this.updated = false,
+  });
+  final String label;
+  final bool updated;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+        if (updated) ...[
+          const SizedBox(width: 12),
+          const UpdatedBadge(),
+        ],
+      ],
+    );
+  }
+}
+
+/// 변경 사항이 있음을 표시하는 작은 뱃지.
+class UpdatedBadge extends StatelessWidget {
+  const UpdatedBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        'updated',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: scheme.onPrimaryContainer,
+              fontWeight: FontWeight.w600,
+            ),
+      ),
+    );
+  }
+}
+
 /// 첫 출시 버전에서 What's New 입력 금지를 알리는 배너.
 class FirstSubmissionNotice extends StatelessWidget {
   const FirstSubmissionNotice({super.key});

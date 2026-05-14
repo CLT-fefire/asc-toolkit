@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../../models/app_store_version_localization.dart';
+import '../../models/parsed_docx.dart';
 import '../../models/team.dart';
 import '../../services/asc_api_client.dart';
 import 'section_widgets.dart';
 
 /// `appStoreVersionLocalizations` PATCH 영역.
-/// whatsNew / description / keywords / promotionalText 4개 필드 편집.
+/// whatsNew / description / keywords / promotionalText / supportUrl / marketingUrl 편집.
 class VersionLocalizationSection extends StatefulWidget {
   const VersionLocalizationSection({
     super.key,
@@ -15,6 +16,7 @@ class VersionLocalizationSection extends StatefulWidget {
     required this.localization,
     required this.isFirstSubmission,
     required this.onUpdated,
+    this.parsedSection,
   });
 
   final Team team;
@@ -23,12 +25,16 @@ class VersionLocalizationSection extends StatefulWidget {
   final bool isFirstSubmission;
   final ValueChanged<AppStoreVersionLocalization> onUpdated;
 
+  /// 워드 파일에서 파싱한 현재 로케일의 데이터. null이면 자동 적용 없음.
+  /// 워드 변경 시 description / promotionalText만 자동 적용 (name·subtitle은 AppInfo 쪽).
+  final ParsedLocaleSection? parsedSection;
+
   @override
   State<VersionLocalizationSection> createState() =>
-      _VersionLocalizationSectionState();
+      VersionLocalizationSectionState();
 }
 
-class _VersionLocalizationSectionState
+class VersionLocalizationSectionState
     extends State<VersionLocalizationSection> {
   final TextEditingController _whatsNewCtrl = TextEditingController();
   final TextEditingController _descriptionCtrl = TextEditingController();
@@ -49,7 +55,7 @@ class _VersionLocalizationSectionState
   @override
   void didUpdateWidget(covariant VersionLocalizationSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.localization?.id != widget.localization?.id ||
+    final locChanged = oldWidget.localization?.id != widget.localization?.id ||
         oldWidget.localization?.whatsNew != widget.localization?.whatsNew ||
         oldWidget.localization?.description !=
             widget.localization?.description ||
@@ -59,9 +65,36 @@ class _VersionLocalizationSectionState
         oldWidget.localization?.supportUrl !=
             widget.localization?.supportUrl ||
         oldWidget.localization?.marketingUrl !=
-            widget.localization?.marketingUrl) {
+            widget.localization?.marketingUrl;
+
+    if (locChanged) {
       _syncControllers();
       _error = null;
+    }
+
+    // 워드 파싱 결과가 새로 들어왔거나 로케일이 바뀐 시점에 자동 적용.
+    final parsedChanged =
+        oldWidget.parsedSection?.locale != widget.parsedSection?.locale ||
+            oldWidget.parsedSection?.description !=
+                widget.parsedSection?.description ||
+            oldWidget.parsedSection?.promotionalText !=
+                widget.parsedSection?.promotionalText;
+    if (locChanged || parsedChanged) {
+      _applyParsedSection();
+    }
+  }
+
+  void _applyParsedSection() {
+    final parsed = widget.parsedSection;
+    if (parsed == null) return;
+    if (parsed.description != null && parsed.description!.isNotEmpty) {
+      _descriptionCtrl.text = parsed.description!;
+    }
+    if (parsed.promotionalText != null &&
+        parsed.promotionalText!.isNotEmpty) {
+      // 170자 제한 — 초과분은 잘라서 입력 (사용자가 직접 다듬도록)
+      final p = parsed.promotionalText!;
+      _promotionalCtrl.text = p.length <= 170 ? p : p.substring(0, 170);
     }
   }
 
@@ -115,17 +148,24 @@ class _VersionLocalizationSectionState
   }
 
   Future<void> _save() async {
+    await saveIfChanged(showToastOnNoChange: true);
+  }
+
+  /// 외부에서 트리거 가능한 저장 메서드. 변경 없으면 무동작 (조용히 종료).
+  /// [showToastOnNoChange]가 true면 변경 없을 때 사용자에게 토스트 안내.
+  /// 반환값: 실제 PATCH가 성공했으면 true, skip/실패면 false.
+  Future<bool> saveIfChanged({bool showToastOnNoChange = false}) async {
     final loc = widget.localization;
-    if (loc == null) return;
+    if (loc == null) return false;
     final diff = _diff();
     if (diff.isEmpty) {
-      _toast('변경된 내용이 없습니다.');
-      return;
+      if (showToastOnNoChange) _toast('변경된 내용이 없습니다.');
+      return false;
     }
     if (diff.containsKey('whatsNew') &&
         (diff['whatsNew']?.length ?? 0) < 4) {
       _toast("ASC 정책상 'What's New'는 최소 4자 이상 입력해야 합니다.");
-      return;
+      return false;
     }
 
     setState(() {
@@ -138,15 +178,20 @@ class _VersionLocalizationSectionState
         loc.id,
         diff,
       );
-      if (!mounted) return;
+      if (!mounted) return false;
       widget.onUpdated(updated);
       _toast("'${loc.locale}' 버전 정보 저장 완료 — ${diff.keys.join(', ')}");
+      return true;
     } catch (e) {
       if (mounted) setState(() => _error = e);
+      return false;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
+
+  /// 현재 controller 값이 ASC 원본과 다른지. UI 뱃지/전체 적용 판단용.
+  bool get hasChanges => _diff().isNotEmpty;
 
   void _toast(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -163,6 +208,11 @@ class _VersionLocalizationSectionState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        SectionHeader(
+          label: '버전 로컬라이제이션',
+          updated: hasChanges,
+        ),
+        const SizedBox(height: 16),
         const SectionLabel("이 버전의 새로운 기능 (What's New)"),
         const SizedBox(height: 8),
         if (widget.isFirstSubmission) ...[
