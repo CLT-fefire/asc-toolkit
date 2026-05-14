@@ -96,7 +96,35 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
   @override
   void initState() {
     super.initState();
+    HardwareKeyboard.instance.addHandler(_handleHardwareKey);
     _loadAll();
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKey);
+    super.dispose();
+  }
+
+  /// 앱 전체에서 Cmd+숫자를 가로채 로케일 칩과 동기화한다.
+  /// `CallbackShortcuts`는 Flutter focus 트리에 의존해 앱 전환 후 돌아오면
+  /// 끊기는 경우가 있어, focus와 무관한 hardware 레벨 핸들러를 사용.
+  bool _handleHardwareKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (!HardwareKeyboard.instance.isMetaPressed) return false;
+    // Shift/Ctrl/Alt가 동시에 눌렸다면 별도 단축키 — 우리가 처리하지 않음.
+    if (HardwareKeyboard.instance.isShiftPressed ||
+        HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isAltPressed) {
+      return false;
+    }
+    for (final entry in _digitKeys.entries) {
+      if (entry.value == event.logicalKey) {
+        _selectLocaleByIndex(entry.key);
+        return true; // 이벤트 소비
+      }
+    }
+    return false;
   }
 
   // ---- 초기 + 전체 로드 ----
@@ -664,20 +692,7 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _wrapShortcuts(_buildBody(context)),
-    );
-  }
-
-  /// Cmd+1 ~ Cmd+9, Cmd+0 (= 10번째) 단축키 매핑.
-  /// macOS 기준 meta = Command 키.
-  Widget _wrapShortcuts(Widget child) {
-    return CallbackShortcuts(
-      bindings: {
-        for (final entry in _digitKeys.entries)
-          SingleActivator(entry.value, meta: true): () =>
-              _selectLocaleByIndex(entry.key),
-      },
-      child: Focus(autofocus: true, child: child),
+          : _buildBody(context),
     );
   }
 
