@@ -583,7 +583,7 @@ class _DocxAttachCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '.docx를 첨부하면 로케일별 이름·부제·설명·프로모션 텍스트가 자동으로 채워집니다. '
+            '.docx를 첨부하면 로케일별 이름·부제·설명이 자동으로 채워집니다. '
             '변경 사항이 있는 섹션에는 "updated" 뱃지가 표시되고, "전체 변경 적용"으로 한 번에 PATCH 가능합니다.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: scheme.onSurfaceVariant,

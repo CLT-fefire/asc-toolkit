@@ -72,13 +72,12 @@ class VersionLocalizationSectionState
       _error = null;
     }
 
-    // 워드 파싱 결과가 새로 들어왔거나 로케일이 바뀐 시점에 자동 적용.
+    // 워드 파싱 결과가 새로 들어왔거나 로케일이 바뀐 시점에 description만 자동 적용.
+    // 부제 다음 ~ 구분선 사이 줄들은 워드 양식상 안내 문구라 ASC에 매핑하지 않음.
     final parsedChanged =
         oldWidget.parsedSection?.locale != widget.parsedSection?.locale ||
             oldWidget.parsedSection?.description !=
-                widget.parsedSection?.description ||
-            oldWidget.parsedSection?.promotionalText !=
-                widget.parsedSection?.promotionalText;
+                widget.parsedSection?.description;
     if (locChanged || parsedChanged) {
       _applyParsedSection();
     }
@@ -89,12 +88,6 @@ class VersionLocalizationSectionState
     if (parsed == null) return;
     if (parsed.description != null && parsed.description!.isNotEmpty) {
       _descriptionCtrl.text = parsed.description!;
-    }
-    if (parsed.promotionalText != null &&
-        parsed.promotionalText!.isNotEmpty) {
-      // 170자 제한 — 초과분은 잘라서 입력 (사용자가 직접 다듬도록)
-      final p = parsed.promotionalText!;
-      _promotionalCtrl.text = p.length <= 170 ? p : p.substring(0, 170);
     }
   }
 
