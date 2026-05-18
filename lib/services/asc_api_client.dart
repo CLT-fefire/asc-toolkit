@@ -484,6 +484,16 @@ class AscApiClient {
     );
   }
 
+  /// 스크린샷 set 자체를 삭제. 안에 screenshots 가 남아있으면 ASC 가 거부할 수 있으므로
+  /// 호출 전에 [fetchScreenshotIdsInSet] 으로 비어있음을 확인하는 것이 안전.
+  Future<void> deleteScreenshotSet(Team team, String setId) async {
+    final headers = await _authHeader(team);
+    await _deleteJson(
+      '/v1/appScreenshotSets/$setId',
+      headers: headers,
+    );
+  }
+
   /// reserve: 업로드 op 목록을 받음. PUT/commit 은 호출자가 처리.
   Future<AppScreenshot> reserveScreenshot(
     Team team,
