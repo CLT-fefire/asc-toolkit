@@ -23,6 +23,7 @@ import '../services/whats_new_parser.dart';
 import 'app_detail/app_info_section.dart';
 import 'app_detail/notification_config_section.dart';
 import 'app_detail/review_detail_section.dart';
+import 'app_detail/screenshot_section.dart';
 import 'app_detail/section_widgets.dart';
 import 'app_detail/version_localization_section.dart';
 
@@ -821,6 +822,13 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
             appId: widget.app.id,
             config: _notificationConfig,
             onUpdated: _onNotificationConfigUpdated,
+          ),
+          const Divider(height: 64),
+          ScreenshotSection(
+            team: widget.team,
+            client: _client,
+            version: _selectedVersion,
+            versionLocalizations: _versionLocs,
           ),
           const SizedBox(height: 32),
         ],
