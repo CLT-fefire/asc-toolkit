@@ -42,6 +42,9 @@ class _ScreenshotUploadScreenState extends State<ScreenshotUploadScreen> {
   ScreenshotUploadProgress? _progress;
   ScreenshotUploadResult? _lastResult;
 
+  /// 현재 진행 중인 uploader 참조. 사용자가 "중단" 누르면 [cancel] 호출.
+  ScreenshotUploader? _currentUploader;
+
   bool get _isEditableVersion => widget.version.isLikelyEditable;
 
   Map<String, String> get _vlocIdByLocale => {
@@ -92,13 +95,14 @@ class _ScreenshotUploadScreenState extends State<ScreenshotUploadScreen> {
     );
     if (confirmed != true) return;
 
+    final uploader = ScreenshotUploader(api: widget.client);
     setState(() {
       _uploading = true;
       _lastResult = null;
       _progress = null;
+      _currentUploader = uploader;
     });
 
-    final uploader = ScreenshotUploader(api: widget.client);
     final result = await uploader.upload(
       team: widget.team,
       bundle: bundle,
@@ -114,12 +118,18 @@ class _ScreenshotUploadScreenState extends State<ScreenshotUploadScreen> {
       _uploading = false;
       _lastResult = result;
       _progress = null;
+      _currentUploader = null;
     });
 
+    final wasCancelled = uploader.isCancelled;
     if (result.hasFailures) {
       await showDialog<void>(
         context: context,
-        builder: (ctx) => _ScreenshotFailuresDialog(failures: result.failures),
+        builder: (ctx) => _ScreenshotFailuresDialog(
+          failures: result.failures,
+          cancelled: wasCancelled,
+          successCount: result.successFileCount,
+        ),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -141,11 +151,46 @@ class _ScreenshotUploadScreenState extends State<ScreenshotUploadScreen> {
     );
   }
 
+  Future<void> _handleBlockedPop() async {
+    final shouldCancel = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('업로드 중단 확인'),
+        content: const Text(
+          '스크린샷 업로드가 진행 중입니다.\n\n'
+          '"중단"을 누르면 다음 파일·그룹은 시작되지 않고, '
+          '현재 진행 중인 ASC 호출은 끝까지 진행된 뒤 결과 다이얼로그가 표시됩니다.\n\n'
+          '중단하시겠습니까?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('계속 업로드'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('중단'),
+          ),
+        ],
+      ),
+    );
+    if (shouldCancel != true || !mounted) return;
+    // cancel 신호만 보낸다. _applyAll 의 await 가 자연스럽게 끝나면서 결과 다이얼로그
+    // 가 표시되고, _uploading=false 로 전환되어 PopScope 차단도 해제된다.
+    _currentUploader?.cancel();
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasBundle = _bundle != null;
 
-    return Scaffold(
+    return PopScope(
+      canPop: !_uploading,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _handleBlockedPop();
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text(
           '${widget.app.name} · v${widget.version.versionString} · 스크린샷',
@@ -207,6 +252,7 @@ class _ScreenshotUploadScreenState extends State<ScreenshotUploadScreen> {
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -410,20 +456,38 @@ class _NoticeCard extends StatelessWidget {
 }
 
 class _ScreenshotFailuresDialog extends StatelessWidget {
-  const _ScreenshotFailuresDialog({required this.failures});
+  const _ScreenshotFailuresDialog({
+    required this.failures,
+    this.cancelled = false,
+    this.successCount = 0,
+  });
 
   final List<ScreenshotUploadFailure> failures;
+  final bool cancelled;
+  final int successCount;
 
   @override
   Widget build(BuildContext context) {
+    final title = cancelled
+        ? '업로드 중단됨 — 성공 $successCount장 · 미진행 ${failures.length}건'
+        : '업로드 실패 (${failures.length}건)';
     return AlertDialog(
-      title: Text('업로드 실패 (${failures.length}건)'),
+      title: Text(title),
       content: SizedBox(
         width: 560,
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (cancelled)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    '사용자가 업로드를 중단했습니다. 이미 ASC에 등록된 $successCount장은 그대로 남아있고, '
+                    '아래 항목들은 시작되지 않거나 중단 시점에 미완료 상태입니다.',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
               for (final f in failures)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
