@@ -25,7 +25,9 @@ void main() {
       for (final g in bundle.groups) {
         expect(g.fileCount, 7,
             reason: '${g.folderName} 그룹은 7장이어야 함');
-        expect(g.displayType, 'APP_IPHONE_69');
+        // 6.9" iPhone (1320×2868) 자산은 ASC enum 상 APP_IPHONE_67 카테고리.
+        // 근거: fastlane PR #29760 — Apple 은 신규 디바이스를 기존 enum 의 해상도로 확장.
+        expect(g.displayType, 'APP_IPHONE_67');
 
         // order 1..7 오름차순 보장
         final orders = g.files.map((f) => f.order).toList();

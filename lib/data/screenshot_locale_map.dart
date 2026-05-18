@@ -20,13 +20,25 @@ const Map<String, String> kFolderToAscLocale = {
 
 /// 파일명 안 `_{SIZE}_` 토큰 → ASC `screenshotDisplayType` enum.
 ///
-/// 디자인팀 현재 표준은 `6_9INCH` 단일이지만, 다른 사이즈도 들어오면 자동 분기.
+/// ⚠️ ASC 의 enum 이름과 실제 디스플레이 인치 표기는 일치하지 않는다.
+/// Apple 은 신규 디바이스(예: iPhone 16 Pro Max 6.9") 가 나와도 enum 을 새로 추가하지 않고,
+/// 기존 enum 의 허용 해상도만 확장한다. 1320×2868 (6.9") 은 `APP_IPHONE_67` 로 들어간다.
+/// 매핑 근거: fastlane PR #29760 `DEVICE_RESOLUTIONS` 정의.
+/// https://github.com/fastlane/fastlane/pull/29760
 const Map<String, String> kFilenameSizeToAscType = {
-  '6_9INCH': 'APP_IPHONE_69',
+  // 디자인팀 표기 "6.9인치" (1320×2868) → ASC 는 6.7" 카테고리로 통합 수신.
+  '6_9INCH': 'APP_IPHONE_67',
+  // 1290×2796 등 기존 6.7" 도 같은 enum.
   '6_7INCH': 'APP_IPHONE_67',
+  // 1284×2778, 1242×2688 (iPhone XS Max 등).
   '6_5INCH': 'APP_IPHONE_65',
-  '6_1INCH': 'APP_IPHONE_61',
+  // 디자인팀 표기 "6.1인치" — fastlane 기준 `APP_IPHONE_58` 은 6.1" 디스플레이 (iPhone 11/12/13/14, 1170×2532).
+  // ASC enum 의 `APP_IPHONE_61` 은 실제로는 6.3" (iPhone 14 Pro/15/16, 1179×2556).
+  // 우리 디자인팀이 어느 디바이스용을 의미하는지는 첫 6.1INCH 자산 들어올 때 확정 필요.
+  // 우선 더 흔한 6.1" (= ASC 의 _58) 로 매핑. 6.3" 면 _61.
+  '6_1INCH': 'APP_IPHONE_58',
   '5_5INCH': 'APP_IPHONE_55',
+  // ASC `APP_IPAD_PRO_3GEN_129` 가 실제로는 13" iPad (2064×2752 포함).
   '13INCH': 'APP_IPAD_PRO_3GEN_129',
   '12_9INCH': 'APP_IPAD_PRO_129',
   '11INCH': 'APP_IPAD_PRO_3GEN_11',

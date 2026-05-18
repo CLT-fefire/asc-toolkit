@@ -60,6 +60,13 @@ class ScreenshotUploadFailure {
   final String reason;
 }
 
+/// `assetDeliveryState` 폴링 결과.
+class _DeliveryResult {
+  _DeliveryResult(this.state, this.errors);
+  final String state;
+  final List<dynamic> errors;
+}
+
 /// 부모 폴더에서 스캔된 그룹들을 ASC 에 업로드.
 ///
 /// 정책 (사용자 확인됨):
@@ -210,17 +217,19 @@ class ScreenshotUploader {
   }
 
   /// set 이 있으면 그 id, 없으면 새로 생성한 id 반환.
+  ///
+  /// ⚠️ ASC API 의 `filter[screenshotDisplayType]` 가 실측 상 무시되어 vloc 전체 set 을
+  /// 돌려준다. existing.first 를 그대로 쓰면 displayType 이 다른 set 에 등록 시도하다
+  /// IMAGE_INCORRECT_DIMENSIONS 로 거부됨. 따라서 클라이언트에서 명시적 매칭.
   Future<String> _ensureSet(
     Team team,
     String vlocId,
     String displayType,
   ) async {
-    final existing = await api.fetchScreenshotSets(
-      team,
-      vlocId,
-      displayType: displayType,
-    );
-    if (existing.isNotEmpty) return existing.first.id;
+    final allSets = await api.fetchScreenshotSets(team, vlocId);
+    final matched =
+        allSets.where((s) => s.screenshotDisplayType == displayType).toList();
+    if (matched.isNotEmpty) return matched.first.id;
     final created = await api.createScreenshotSet(team, vlocId, displayType);
     return created.id;
   }
@@ -260,30 +269,53 @@ class ScreenshotUploader {
     await api.commitScreenshot(team, reserved.id, md5Hex);
 
     // commit 만으로는 ASC 가 데이터를 정상 수신했는지 알 수 없음.
-    // assetDeliveryState 가 AWAITING_UPLOAD 인 경우 = PUT 단계에서 데이터 미도달.
-    // (옵션 D 첫 검증에서 정확히 이 시나리오로 모든 이미지가 비어 있었음)
-    //
-    // commit 직후엔 ASC 가 state 를 갱신하기 전일 수 있어 한 번 짧게 재시도한다.
-    final state = await _confirmDelivery(team, reserved.id);
-    if (state == 'AWAITING_UPLOAD' || state == 'FAILED') {
-      throw Exception(
-        '업로드 후 ASC 상태가 비정상: $state '
-        '(presigned PUT 단계에서 데이터가 도달하지 않았을 가능성)',
-      );
+    // assetDeliveryState 가 AWAITING_UPLOAD/FAILED 면 사용자에게 친화적 사유로 throw.
+    final delivery = await _confirmDelivery(team, reserved.id);
+    if (delivery.state == 'AWAITING_UPLOAD' || delivery.state == 'FAILED') {
+      throw Exception(_friendlyDeliveryError(delivery));
     }
 
     return reserved.id;
   }
 
-  /// commit 직후 ASC `assetDeliveryState.state` 를 두 번까지 확인.
-  /// 첫 GET 이 AWAITING_UPLOAD/빈 문자열이면 500ms 대기 후 한 번 더 시도한다.
-  Future<String> _confirmDelivery(Team team, String screenshotId) async {
-    var state = await api.fetchScreenshotDeliveryState(team, screenshotId);
-    if (state == 'AWAITING_UPLOAD' || state.isEmpty) {
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      state = await api.fetchScreenshotDeliveryState(team, screenshotId);
+  /// commit 직후 ASC 처리 결과를 폴링.
+  ///
+  /// ASC 는 commit(uploaded:true) 후 비동기로 이미지 검증(해상도/포맷/사이즈 등)을 수행.
+  /// 결과로 `assetDeliveryState.state` 가:
+  /// - `UPLOAD_COMPLETE`: byte 수신, 검증 대기 (폴링 계속)
+  /// - `COMPLETE`: 검증 통과, ASC 웹에 노출됨
+  /// - `FAILED`: 검증 거부 (`errors[]` 에 사유)
+  /// 로 전환된다. 최대 12초간 1초 간격 폴링.
+  Future<_DeliveryResult> _confirmDelivery(
+    Team team,
+    String screenshotId,
+  ) async {
+    String lastState = '';
+    List<dynamic> lastErrors = const [];
+    for (var attempt = 0; attempt < 12; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(const Duration(seconds: 1));
+      }
+      try {
+        final attrs = await api.fetchScreenshotAttributes(team, screenshotId);
+        final asset = attrs['assetDeliveryState'];
+        if (asset is Map<String, dynamic>) {
+          lastState = (asset['state'] as String?) ?? '';
+          final errs = asset['errors'];
+          lastErrors = (errs is List) ? errs : const [];
+        }
+        if (lastState == 'COMPLETE' || lastState == 'FAILED') {
+          return _DeliveryResult(lastState, lastErrors);
+        }
+        // PUT 미수신이 1초 후에도 그대로면 진짜 미도달.
+        if (lastState == 'AWAITING_UPLOAD' && attempt >= 1) {
+          return _DeliveryResult(lastState, lastErrors);
+        }
+      } catch (_) {
+        // 일시적 GET 실패는 다음 시도로 넘어감.
+      }
     }
-    return state;
+    return _DeliveryResult(lastState, lastErrors);
   }
 
   Future<void> _putBinary(
@@ -296,8 +328,8 @@ class ScreenshotUploader {
         Uri.parse(url),
         // Uint8List 를 직접 전달해야 dio 가 contentLength/body 를 일관되게 보냄.
         // Stream.value(bytes) 로 보내면 일부 dio 버전에서 chunked 와 명시적 contentLength
-        // 가 충돌해 빈 body 가 가는 사례가 있음 (실제 옵션 D 첫 검증에서 49장이 모두
-        // 코드 흐름은 통과했지만 ASC 에 데이터 미도달).
+        // 가 충돌해 빈 body 가 가는 사례가 있음 (옵션 D 첫 검증에서 모든 파일이 코드 흐름은
+        // 통과했지만 ASC 에 데이터 미도달).
         data: bytes,
         options: Options(
           headers: headers,
@@ -308,7 +340,6 @@ class ScreenshotUploader {
           validateStatus: (s) => s != null && s >= 200 && s < 300,
         ),
       );
-      // 추가 안전망: 200~204 범위만 통과
       final status = res.statusCode ?? 0;
       if (status < 200 || status >= 300) {
         throw Exception('presigned PUT 실패: HTTP $status');
@@ -318,5 +349,28 @@ class ScreenshotUploader {
         'presigned PUT 실패 [${e.response?.statusCode}]: ${e.message ?? e.toString()}',
       );
     }
+  }
+}
+
+/// ASC `assetDeliveryState` 거부 사유 → 사용자가 행동 가능한 한 줄 메시지.
+String _friendlyDeliveryError(_DeliveryResult delivery) {
+  if (delivery.state == 'AWAITING_UPLOAD') {
+    return 'ASC 가 이미지 데이터를 수신하지 못함 '
+        '(presigned PUT 단계 네트워크/전송 실패 가능성)';
+  }
+  String? code;
+  if (delivery.errors.isNotEmpty && delivery.errors.first is Map) {
+    code = (delivery.errors.first as Map)['code']?.toString();
+  }
+  switch (code) {
+    case 'IMAGE_INCORRECT_DIMENSIONS':
+      return '이미지 해상도가 ASC displayType 의 허용 범위 밖. '
+          '(예: 6.9" 1320×2868 자산은 APP_IPHONE_67 카테고리로 들어가야 함)';
+    case 'IMAGE_DELIVERY_FAILED':
+      return 'ASC 이미지 처리 실패. 잠시 후 재시도하거나 ASC 상태 확인.';
+    case null:
+      return 'ASC 처리 실패 (state=${delivery.state})';
+    default:
+      return 'ASC 거부: $code';
   }
 }
