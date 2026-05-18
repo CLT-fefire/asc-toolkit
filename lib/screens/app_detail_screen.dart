@@ -23,9 +23,9 @@ import '../services/whats_new_parser.dart';
 import 'app_detail/app_info_section.dart';
 import 'app_detail/notification_config_section.dart';
 import 'app_detail/review_detail_section.dart';
-import 'app_detail/screenshot_section.dart';
 import 'app_detail/section_widgets.dart';
 import 'app_detail/version_localization_section.dart';
+import 'screenshot_upload_screen.dart';
 
 class AppDetailScreen extends StatefulWidget {
   const AppDetailScreen({
@@ -126,6 +126,22 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
       }
     }
     return false;
+  }
+
+  void _openScreenshotUpload() {
+    final version = _selectedVersion;
+    if (version == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ScreenshotUploadScreen(
+          team: widget.team,
+          client: _client,
+          app: widget.app,
+          version: version,
+          versionLocalizations: _versionLocs,
+        ),
+      ),
+    );
   }
 
   // ---- 초기 + 전체 로드 ----
@@ -685,6 +701,15 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
         title: Text(widget.app.name),
         actions: [
           IconButton(
+            tooltip: _selectedVersion == null
+                ? '버전 로딩 후 사용 가능'
+                : '스크린샷 업로드',
+            onPressed: (_loading || _selectedVersion == null)
+                ? null
+                : _openScreenshotUpload,
+            icon: const Icon(Icons.photo_library_outlined),
+          ),
+          IconButton(
             tooltip: '새로고침',
             onPressed: _loading ? null : _loadAll,
             icon: const Icon(Icons.refresh),
@@ -822,13 +847,6 @@ class _AppDetailScreenState extends State<AppDetailScreen> {
             appId: widget.app.id,
             config: _notificationConfig,
             onUpdated: _onNotificationConfigUpdated,
-          ),
-          const Divider(height: 64),
-          ScreenshotSection(
-            team: widget.team,
-            client: _client,
-            version: _selectedVersion,
-            versionLocalizations: _versionLocs,
           ),
           const SizedBox(height: 32),
         ],
