@@ -86,6 +86,19 @@ class ScreenshotUploader {
   final AscApiClient api;
   final Dio _uploadDio;
 
+  bool _cancelled = false;
+
+  /// 진행 중인 업로드를 graceful 중단 요청.
+  ///
+  /// 이미 ASC 로 보낸 reserve/PUT/commit/폴링은 끝까지 진행되지만, 다음 파일·다음 그룹은
+  /// 시작되지 않는다. 중단된 파일/그룹은 `ScreenshotUploadFailure(reason: "사용자가 업로드를 중단")`
+  /// 로 결과에 포함되어 호출자가 부분 결과를 확인할 수 있다.
+  void cancel() {
+    _cancelled = true;
+  }
+
+  bool get isCancelled => _cancelled;
+
   /// 한 bundle 의 모든 그룹을 순차 업로드.
   ///
   /// [localizationIdByLocale]: locale → AppStoreVersionLocalization id 매핑
@@ -101,6 +114,21 @@ class ScreenshotUploader {
 
     for (var gi = 0; gi < bundle.groups.length; gi++) {
       final group = bundle.groups[gi];
+
+      // 그룹 시작 전 취소 확인: 중단 후의 모든 그룹·파일은 failures 로 기록해 사용자가
+      // 어디까지 진행됐는지 결과 다이얼로그에서 확인 가능.
+      if (_cancelled) {
+        for (final f in group.files) {
+          failures.add(ScreenshotUploadFailure(
+            folderName: group.folderName,
+            locale: group.locale,
+            fileName: f.fileName,
+            reason: '사용자가 업로드를 중단함 (시작 전)',
+          ));
+        }
+        continue;
+      }
+
       final vlocId = localizationIdByLocale[group.locale];
       if (vlocId == null) {
         failures.add(ScreenshotUploadFailure(
@@ -154,6 +182,21 @@ class ScreenshotUploader {
         final uploadedIds = <String>[];
         for (var fi = 0; fi < group.files.length; fi++) {
           final f = group.files[fi];
+
+          // 다음 파일 시작 전 취소 확인. 현재 그룹의 남은 파일과 다음 그룹은
+          // failures 로 기록 (현재 진행 중인 파일까지는 위 try 안에서 자연 종료).
+          if (_cancelled) {
+            for (final remaining in group.files.skip(fi)) {
+              failures.add(ScreenshotUploadFailure(
+                folderName: group.folderName,
+                locale: group.locale,
+                fileName: remaining.fileName,
+                reason: '사용자가 업로드를 중단함',
+              ));
+            }
+            break;
+          }
+
           onProgress?.call(ScreenshotUploadProgress(
             groupIndex: gi,
             groupCount: bundle.groups.length,
@@ -293,6 +336,8 @@ class ScreenshotUploader {
     String lastState = '';
     List<dynamic> lastErrors = const [];
     for (var attempt = 0; attempt < 12; attempt++) {
+      // 사용자가 중단했으면 폴링도 즉시 종료. 현재까지 본 state 를 그대로 반환.
+      if (_cancelled) return _DeliveryResult(lastState, lastErrors);
       if (attempt > 0) {
         await Future<void>.delayed(const Duration(seconds: 1));
       }
