@@ -37,6 +37,9 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Distribution dmg (regenerate via tools/package_macos.sh, 배포는 GitHub Release로)
+*.dmg
+
 # Symbolication related
 app.*.symbols
 

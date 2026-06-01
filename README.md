@@ -2,15 +2,25 @@
 
 App Store Connect API를 통해 **여러 팀의 앱 메타데이터**를 조회·수정하는 Flutter macOS 데스크탑 도구.
 
-> 현재 상태: **PoC 1단계 — 다중 팀 등록 + 앱 목록 조회**까지 완료. 메타데이터 수정 기능은 후속.
+> 현재 상태: **v1.0.1 릴리즈** — 다중 팀 메타데이터 일괄 편집 + 스크린샷 일괄 업로드까지 구현. [Releases](https://github.com/CLT-fefire/asc-toolkit/releases/latest)에서 서명된 dmg 다운로드.
 
 ## 무엇을 하는 도구인가
 
 - 팀별로 다른 App Store Connect API Key(.p8)를 등록하고
 - 팀을 선택하면 해당 팀이 관리하는 **앱 목록을 한 번에 조회**
-- (예정) 앱 이름·부제·카테고리·키워드·설명·"이 버전의 새로운 기능"·심사 정보·스크린샷 등 수정
+- 앱 이름·부제·카테고리·키워드·설명·"이 버전의 새로운 기능"·심사 정보·서버 알림을 **로케일 일괄 편집** (.docx/.txt/텍스트 입력 → 모든 로케일 자동 매핑)
+- 디자인팀 폴더 한 번 선택 → **스크린샷 일괄 업로드** (로케일·사이즈 자동 인식)
 
 순수 Flutter macOS 앱이라 CORS 제약 없이 App Store Connect API를 직접 호출합니다.
+
+## 다운로드 / 설치
+
+[**Releases**](https://github.com/CLT-fefire/asc-toolkit/releases/latest)에서 `ASC-Toolkit-<버전>-macos.dmg`를 받습니다. Dear U **Developer ID**로 코드 서명되어 있습니다.
+
+1. dmg 열기 → `ASC Toolkit.app`을 `Applications` 폴더로 드래그
+2. **최초 실행만**: Finder에서 `/Applications/ASC Toolkit.app` 우클릭 → **열기** → 대화상자에서 다시 **열기**. (서명은 됐지만 공증 전이라 더블클릭하면 "확인되지 않은 개발자" 경고가 뜹니다. 우클릭 → 열기는 한 번만, 이후 더블클릭으로 일반 실행.)
+
+> 아래 "사전 준비 / 실행"은 소스에서 직접 빌드·개발할 때만 필요합니다. 배포용 서명 dmg는 `./tools/package_macos.sh`로 만듭니다(Developer ID 자동 감지 → 없으면 ad-hoc).
 
 ## 사전 준비
 
@@ -26,7 +36,7 @@ flutter doctor
 3. 생성 직후 **.p8 파일을 1회만 다운로드** (재다운로드 불가)
 4. 화면에서 **Issuer ID**, **Key ID** 복사
 
-> .p8 파일은 PKCS#8 PEM 형식이며 절대 외부에 공유하지 마십시오. 본 앱은 `flutter_secure_storage`(macOS Keychain)에만 저장합니다.
+> .p8 파일은 PKCS#8 PEM 형식이며 절대 외부에 공유하지 마십시오. 본 앱은 파일 기반(`~/Library/Application Support/asc_toolkit/teams.json`, chmod 600)으로 저장합니다 — macOS Keychain은 쓰지 않습니다(ad-hoc 환경의 키체인 다이얼로그 반복 회피).
 
 ## 실행
 
@@ -77,9 +87,9 @@ lib/
   - Mac App Store 배포가 필요해지면 Sandbox 다시 켜고 자동 사인 + keychain-access-groups 추가 필요
 - 외부 배포는 `.app` 또는 `.dmg`로 충분합니다. (Gatekeeper 경고는 우클릭 → 열기로 1회 우회 또는 notarize)
 
-## 다음 단계 (Roadmap)
+## 구현된 기능 (v1.0.x)
 
-PoC 1차에서 검증된 호출 패턴(`JWT → Bearer → /v1/apps`)을 기반으로 다음 항목을 점진적으로 추가:
+아래 항목은 모두 구현 완료되었습니다. 자세한 사용법은 [사내 Confluence 가이드](https://everysing.atlassian.net/wiki/spaces/IMA/pages/4439343474/ASC+Toolkit) 참고.
 
 | 항목 | API 엔드포인트 |
 | --- | --- |
